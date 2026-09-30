@@ -14,6 +14,27 @@ legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a ho
 > O Play Protect pode avisar que o app é "desconhecido". É normal: o app não veio da Play Store.
 > É só tocar em *Instalar mesmo assim*.
 
+## 💻 Versão para computador (PWA)
+
+A pasta [`pwa/`](pwa) tem o mesmo jogo feito em **HTML5 + JavaScript**, para jogar no navegador
+do computador e **instalar como aplicativo** (funciona até sem internet depois de instalado).
+
+**Controles no computador:** `W A S D` ou setas = andar • `Esc`/`P` = pausar • `F` = tela cheia •
+`1`–`4` = escolher melhoria / comprar na loja • `R` = rolar • `Enter` = próxima onda.
+O mouse também funciona em todos os botões (e no celular, dá pra jogar arrastando o dedo).
+
+**Como publicar e instalar:**
+1. No GitHub, vá em *Settings → Pages* e em *Source* escolha **GitHub Actions**.
+2. Junte este branch com o `main`: o workflow `Publicar PWA` coloca o jogo no ar em
+   `https://<seu-usuario>.github.io/<repositorio>/`.
+3. Abra o link no Chrome ou Edge e clique no ícone de **instalar** (⊕) na barra de endereço.
+   O jogo vira um app com ícone próprio, em tela cheia.
+
+Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
+Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
+
+![Versão PWA](docs/pwa_playing.png)
+
 ## 🎮 Como jogar
 
 - **Arraste o dedo** em qualquer lugar da tela para andar (joystick virtual).

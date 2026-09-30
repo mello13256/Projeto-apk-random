@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Horta Hostil</title>
+  <meta name="description" content="Roguelite de arena estilo Brotato: legumes armados contra insetos invasores.">
+  <meta name="theme-color" content="#1B2414">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin: 0; height: 100%; background: #1B2414; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; user-select: none; -webkit-user-select: none; }
+    noscript { color: #fff; font: 20px sans-serif; position: absolute; inset: 0; display: grid; place-items: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game" aria-label="Horta Hostil"></canvas>
+  <noscript>Ative o JavaScript para jogar Horta Hostil.</noscript>
+  <script src="js/data.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/sfx.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
