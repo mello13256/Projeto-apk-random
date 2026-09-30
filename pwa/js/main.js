@@ -20,8 +20,8 @@
   // --- Tamanho da tela (nítido em telas de alta densidade) ---
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(window.innerWidth * dpr);
-    canvas.height = Math.round(window.innerHeight * dpr);
+    canvas.width = Math.round((canvas.clientWidth || window.innerWidth) * dpr);
+    canvas.height = Math.round((canvas.clientHeight || window.innerHeight) * dpr);
     ui.setSize(canvas.width, canvas.height);
   }
   window.addEventListener('resize', resize);
