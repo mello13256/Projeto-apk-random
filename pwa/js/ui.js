@@ -124,7 +124,7 @@ class Ui {
   mpCreate() {
     if (this.mp.busy) return;
     this.withMpName(false, (name) => {
-      this.mp.create(name, this.mpChar(), this.difficulty).catch((e) => this.showToast(e.message, 3));
+      this.mp.create(name, this.mpChar(), this.difficulty).catch((e) => this.showToast(e.message, 6));
     });
   }
 
@@ -133,7 +133,7 @@ class Ui {
     if (this.mp.busy) return;
     const go = (c) => this.withMpName(false, (name) => {
       this.game.state = 'MP_MENU';
-      this.mp.join(c, name, this.mpChar()).catch((e) => this.showToast(e.message, 4));
+      this.mp.join(c, name, this.mpChar()).catch((e) => this.showToast(e.message, 6));
     });
     if (code) { go(code); return; }
     askText({

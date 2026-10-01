@@ -24,7 +24,11 @@ const Fb = {
       opt.headers = { 'Content-Type': 'application/json' };
     }
     const res = await fetch(this.url(path), opt);
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      const e = new Error('HTTP ' + res.status);
+      e.status = res.status;
+      throw e;
+    }
     return res.json();
   },
   get(path) { return this.req('GET', path); },

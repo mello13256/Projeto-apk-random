@@ -25,6 +25,13 @@ function randomId() { return 'p' + Math.random().toString(36).slice(2, 10); }
 function validCode(c) { return typeof c === 'string' && /^[A-Z0-9]{4}$/.test(c); }
 function now() { return performance.now(); }
 
+/** Mensagem de erro amigável para falhas de rede/permissão. */
+function netError(e, fallback) {
+  if (e && (e.status === 401 || e.status === 403)) return 'O banco do jogo não liberou as salas: falta publicar as regras novas do Firebase.';
+  if (navigator.onLine === false) return 'Sem internet.';
+  return fallback;
+}
+
 class Multiplayer {
   constructor(game, ui) {
     this.game = game;
@@ -98,7 +105,7 @@ class Multiplayer {
     } catch (e) {
       this.busy = '';
       this.role = null;
-      throw new Error(navigator.onLine === false ? 'Sem internet.' : 'Não deu pra criar a sala. Tente de novo.');
+      throw new Error(netError(e, 'Não deu pra criar a sala. Tente de novo.'));
     }
     this.busy = '';
     this.active = true;
@@ -124,8 +131,7 @@ class Multiplayer {
     } catch (e) {
       this.busy = '';
       this.role = null;
-      throw new Error(e.message.startsWith('HTTP') || e.name === 'TypeError'
-        ? (navigator.onLine === false ? 'Sem internet.' : 'Não deu pra entrar na sala. Tente de novo.') : e.message);
+      throw new Error(e.status || e.name === 'TypeError' ? netError(e, 'Não deu pra entrar na sala. Tente de novo.') : e.message);
     }
     this.busy = '';
     this.active = true;
