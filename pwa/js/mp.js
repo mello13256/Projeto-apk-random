@@ -738,6 +738,9 @@ class Multiplayer {
       const p = g.players.find((x) => x.slot === a[0]);
       if (!p) continue;
       seen.add(p);
+      // No intervalo entre ondas, meus dados (sementes, armas, atributos) são os da MINHA loja:
+      // o anfitrião só fica sabendo quando eu aperto "Pronto". Não deixa a foto dele desfazer as compras.
+      if (p === me && o.ph === 'B') continue;
       const wasAlive = p.alive;
       p.hp = a[3];
       p.alive = !!(a[5] & 1);
