@@ -5,6 +5,21 @@
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const prefs = new Prefs();
+  // App Android: na primeira vez, traz os recordes do app antigo (versão em Java)
+  if (IS_APP && !prefs.data.migrated) {
+    try {
+      const old = window.HortaAndroid.legacy();
+      if (old) {
+        const d = JSON.parse(old);
+        Object.assign(prefs.data, mergeProgress(prefs.data, d));
+        if (d.playerName && !prefs.data.playerName) prefs.data.playerName = d.playerName;
+        if (typeof d.sound === 'boolean') prefs.data.sound = d.sound;
+        if (typeof d.music === 'boolean') prefs.data.music = d.music;
+      }
+    } catch (e) { /* sem dados antigos */ }
+    prefs.data.migrated = true;
+    prefs.save();
+  }
   const sfx = new Sfx();
   sfx.enabled = prefs.data.sound;
   sfx.musicOn = prefs.data.music;
@@ -17,7 +32,10 @@
 
   game.fx = {
     sound: (id) => sfx.play(id),
-    vibrate: (ms) => { if (navigator.vibrate) navigator.vibrate(ms); },
+    vibrate: (ms) => {
+      if (IS_APP && window.HortaAndroid.vibrate) window.HortaAndroid.vibrate(ms);
+      else if (navigator.vibrate) navigator.vibrate(ms);
+    },
     runEnded: (won, wave) => ui.runEnded(won, wave),
   };
 
@@ -30,7 +48,7 @@
 
   // --- Tamanho da tela (nítido em telas de alta densidade) ---
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = Math.min(window.devicePixelRatio || 1, IS_APP ? 1.5 : 2);
     canvas.width = Math.round((canvas.clientWidth || window.innerWidth) * dpr);
     canvas.height = Math.round((canvas.clientHeight || window.innerHeight) * dpr);
     // Celular em pé: desenha o jogo girado, assim dá pra jogar segurando deitado
@@ -144,6 +162,20 @@
       if (mp.active && now - lastStep > 30) advance(now);
     };
   } catch (e) { /* sem worker: só o laço normal */ }
+
+  // --- Botão "voltar" do Android: true = o jogo cuidou; false = pode fechar o app ---
+  window.hortaBack = () => {
+    const box = document.getElementById('nameBox');
+    if (box && !box.hidden) { document.getElementById('nameCancel').click(); return true; }
+    if (ui.showHelp) { ui.showHelp = false; return true; }
+    if (ui.popupWeapon >= 0) { ui.popupWeapon = -1; return true; }
+    const st = game.state;
+    if (st === 'MENU') return false;
+    if (st === 'PLAYING') { ui.doAction(ui.menuOpen() ? 'RESUME' : 'PAUSE'); return true; }
+    if (st === 'LOBBY') { ui.doAction('LOBBY_LEAVE'); return true; }
+    if (['CHAR_SELECT', 'RANKING', 'MP_MENU', 'ACCOUNT', 'POLLS', 'GAME_OVER', 'VICTORY'].includes(st) && !game.coop) { ui.doAction('MENU'); return true; }
+    return true; // loja, melhorias, caixas, fim do multiplayer: não sai sem querer
+  };
 
   // --- Link de convite (?sala=CODIGO) ou atalho para o multiplayer (#mp, usado pelo app Android) ---
   const params = new URLSearchParams(location.search);

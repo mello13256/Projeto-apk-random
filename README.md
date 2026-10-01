@@ -1,141 +1,48 @@
 # 🥔 Horta Hostil
 
-Jogo para **Android** no estilo *Brotato*: um roguelite de arena em que você é um
+Jogo no estilo *Brotato* para **Android, PC e celular**: um roguelite de arena em que você é um
 legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a horta.
+Tem **15 personagens**, **6 dificuldades**, **multiplayer cooperativo e PvP**, ranking, contas e enquetes.
 
-![Menu](docs/v2_01_menu.png)
+![Menu](docs/v3_menu.png)
 
-## 📲 Como instalar no celular
+## ▶️ Onde jogar
 
-1. Baixe o arquivo **[`HortaHostil.apk`](HortaHostil.apk)** (clique nele no GitHub e depois em *Download raw file*).
-2. Abra o arquivo no celular. Se o Android pedir, permita **"instalar apps de fontes desconhecidas"**.
-3. Instale e jogue! (Precisa de Android 7.0 ou mais novo. O jogo roda deitado, na horizontal.)
-
-> O Play Protect pode avisar que o app é "desconhecido". É normal: o app não veio da Play Store.
-> É só tocar em *Instalar mesmo assim*.
-
-## 🌐 Jogar online (PC e celular)
-
-### ▶️ **https://mello13256.github.io/Projeto-apk-random/**
-
-O mesmo jogo (com tudo do APK, mais o multiplayer) roda no navegador do **computador e do celular**,
-publicado pelo **GitHub Pages**. Ele funciona até sem internet depois da primeira visita e pode ser
-**instalado como aplicativo**:
-
-- **No computador (Chrome/Edge):** clique no ícone de instalar (⊕) na barra de endereço.
-- **No Android (Chrome):** menu ⋮ → **Instalar app**. Ou toque em **Baixar app Android** no menu do jogo para pegar o APK.
-- **No iPhone (Safari):** botão Compartilhar → **Adicionar à Tela de Início**.
-
-No APK, o botão **👥 Multiplayer** do menu abre esse site direto na tela de multiplayer.
-
-O jogo percebe sozinho se você está usando teclado/mouse ou toque e muda os controles e as dicas:
-
-| | Computador | Celular / tablet |
-|---|---|---|
-| Andar | `W A S D` ou setas (ou arrastar o mouse) | arrastar o dedo (joystick) |
-| Pausar | `Esc` ou `P` | botão **II** |
-| Personagem / dificuldade | setas, `Q`/`E` = dificuldade, `Enter` = começar | tocar |
-| Melhorias / loja | clique ou teclas `1`–`4`, `R` = rolar, `Enter` = próxima onda | tocar nos cartões |
-| Caixas | `Enter` = pegar, `R` = reciclar | tocar |
-| Ver o que um item faz | passar o mouse | tocar no item |
-| Tela cheia | `F` ou botão do menu | automática ao tocar em **Jogar** |
-
-No celular o jogo fica sempre deitado: se o aparelho estiver em pé (ou com a rotação automática
-desligada), ele é desenhado de lado, é só virar o celular.
-
-**Como a publicação funciona:** o workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
-roda a cada push que muda a pasta `pwa/` ou o APK, copia o `HortaHostil.apk` junto e publica tudo no
-GitHub Pages (em *Settings → Pages*, a origem é **GitHub Actions**).
-
-Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
-Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
-
-## 👥 Multiplayer (2 a 4 jogadores)
-
-No site, toque em **👥 MULTIPLAYER** no menu:
-
-1. Um jogador toca em **Criar sala** e recebe um código de 4 letras (ex.: `K7QX`).
-   O botão **🔗 Convidar** copia (ou compartilha) um link que já entra na sala.
-2. Os amigos tocam em **Entrar numa sala** e digitam o código — cada um no seu celular ou computador.
-3. Cada um escolhe o legume e toca em **Pronto**; o dono da sala escolhe a dificuldade e toca em **Começar**.
-
-Regras do modo cooperativo:
-
-- Todos jogam na mesma arena. Os insetos perseguem o jogador mais perto.
-- **As sementes são do time:** quando alguém pega, todo mundo ganha. As caixas e as frutas são de quem pegou.
-- Com mais gente, os insetos têm mais vida e aparecem mais rápido.
-- **Quem cai vira fantasminha 👻** e volta na onda seguinte. A partida só acaba se todo mundo cair.
-- Entre as ondas, cada um faz as melhorias e a loja no próprio aparelho; a próxima onda começa
-  quando todos tocarem em **Pronto ✔**.
-- No multiplayer não dá pra pausar, a partida não fica salva e não vale para o ranking.
-
-**Como funciona por dentro:** o aparelho de quem criou a sala (o *anfitrião*) roda a partida.
-Os outros mandam a posição do próprio legume e recebem a arena 15 vezes por segundo (o próprio
-movimento é calculado na hora, sem atraso). A conexão entre os aparelhos é **direta (WebRTC)**;
-o **Firebase** só serve para achar a sala e combinar a conexão. Se a rede bloquear a conexão direta,
-tudo passa pelo Firebase automaticamente (a sala mostra "direto ⚡" ou "via servidor 🌐").
-Código em `pwa/js/net.js` (rede) e `pwa/js/mp.js` (salas e sincronização).
-
-Para testar sem internet: `node tools/fake-firebase.js 9000` e abra
-`http://localhost:8080/?db=http://localhost:9000` em duas abas. O robô também joga em grupo:
-`node pwa/sim.js coop 4` (partidas com 2, 3 e 4 jogadores no mesmo computador).
-
-## 🏆 Ranking online
-
-No menu, **🏆 Ranking** mostra os 20 melhores de cada dificuldade (do site e do APK juntos).
-No fim de cada partida, **Enviar pro ranking** pede um nome (2 a 16 letras) e envia a partida.
-A ordem é: quem venceu, depois a onda alcançada e por último os insetos derrotados.
-
-O ranking fica no **Firebase Realtime Database** (plano gratuito), acessado direto pela API REST,
-sem bibliotecas (`pwa/js/ranking.js` no site e `Ranking.java` no APK). As **regras de segurança**
-do banco (em [`firebase-rules.json`](firebase-rules.json)) deixam qualquer um ler e enviar
-pontuações, mas ninguém consegue editar ou apagar, e dados inválidos são recusados.
-As mesmas regras liberam as salas do multiplayer (`rooms/CODIGO`), com limite de tamanho em cada campo.
-Para aplicar: no console do Firebase, *Realtime Database → Regras*, cole o arquivo inteiro e clique em **Publicar**.
-
-## 🎮 Como jogar
-
-- **Arraste o dedo** em qualquer lugar da tela para andar (joystick virtual).
-- Suas armas (até 6!) **atacam sozinhas** o inimigo mais próximo.
-- Os insetos derrotados soltam **sementes 🌱**, que servem de dinheiro **e** de experiência.
-- Sobreviva até o **tempo da onda** acabar. São **20 ondas**, com chefões nas ondas 10 e 20.
-- Entre as ondas:
-  - **Subiu de nível?** Escolha uma entre 4 melhorias de atributo.
-  - **Loja:** compre armas e itens, **tranque** 🔒 o que quiser guardar pra próxima, ou **role** a loja.
-  - Toque numa arma sua para **vender** ou **combinar**: duas armas iguais do mesmo nível viram uma de nível maior (I → II → III → IV).
-
-| Escolha do personagem | Em jogo (elite 👑, caixa 📦, vida baixa) |
+| | |
 |---|---|
-| ![Personagens](docs/v2_03_chars.png) | ![Jogando](docs/v2_04_playing.png) |
-| **Caixa no fim da onda** | **Loja** |
-| ![Caixa](docs/v2_06_crate.png) | ![Loja](docs/v2_07_shop.png) |
+| 🌐 **No navegador (PC e celular)** | **https://mello13256.github.io/Projeto-apk-random/** |
+| 📲 **App Android** | baixe o **[`HortaHostil.apk`](HortaHostil.apk)** (no GitHub: *Download raw file*) |
 
-### Novidades da versão 2.0
+**Instalar o APK:** abra o arquivo no celular e, se o Android pedir, permita *instalar apps de fontes
+desconhecidas* (o Play Protect pode avisar que o app é "desconhecido": toque em *Instalar mesmo assim*).
+Precisa de Android 7.0 ou mais novo. Quem já tinha o app antigo pode instalar por cima: os recordes vêm junto.
 
-- **3 personagens novos para desbloquear:** 🎃 Abóbora Blindada (chegue na onda 10),
-  🥒 Pepino Arqueiro (derrote 2000 insetos no total) e 🍄 Cogumelo Místico (vença 1 partida).
-  Também dá pra escolher **🎲 Aleatório**.
-- **4 dificuldades:** Fácil, Normal, Difícil e Pesadelo (o jogo marca ✔ nas que você já venceu).
-- **3 armas novas:** 🔨 Martelo (arremessa longe), 🏹 Arco (atravessa 2 inimigos) e
-  ❄️ Varinha de Gelo (deixa os inimigos lentos).
-- **Inimigo novo:** 🦋 Mariposa, que voa em zigue-zague.
-- **Elites 👑:** versões douradas e bem mais fortes dos insetos (a partir da onda 5).
-  Sempre deixam uma **caixa 📦**.
-- **Caixas:** no fim da onda, cada caixa vira um item grátis (ou pode ser reciclada por sementes).
-- **6 itens com efeitos especiais:** 🌀 Redemoinho (pega sementes de mais longe),
-  🍌 Banana (frutas curam mais), 🌹 Rosa (espinhos), 🗺️ Mapa do Tesouro (mais caixas),
-  🎆 Fogos e 🌋 Vulcão (inimigos explodem ao morrer).
-- **Continuar depois:** a partida é salva na loja. Se fechar o app, aparece **Continuar** no menu.
-- **Música de fundo** gerada por código (e botão para desligar).
-- **Fim de onda animado:** os insetos somem e as sementes voam até você.
-- **Aviso de vida baixa:** as bordas da tela piscam em vermelho.
-- **Dano de cada arma:** aparece na pausa, na loja e no fim da partida.
-- **Toque num item** para ver o que ele faz.
-- Recordes: melhor onda, vitórias e total de insetos derrotados.
+O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ na barra de endereço;
+Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
+depois da primeira visita.
 
-![Fim de jogo](docs/v2_11_gameover.png)
+## 🆕 Novidades da versão 3.0
 
-### Personagens
+- **6 classes novas**, cada uma com uma mecânica diferente (veja a tabela abaixo).
+- **2 dificuldades novas:** 😈 **Inferno** (a máxima: 35 ondas numa horta em chamas, insetos infernais e o
+  chefão novo **Besouro Infernal**) e ♾️ **Infinito** (o Pesadelo sem fim: chefões a cada 10 ondas).
+- **⚔️ Modo PvP** no multiplayer: 15 rodadas para cada um se preparar e depois um duelo numa arena que fecha.
+- **👤 Contas:** salve o progresso na nuvem e continue em outro aparelho (site ou app).
+- **🗳️ Enquetes** da comunidade e **🐞 Relatar bug / sugerir ideia** direto do jogo.
+- **Visual novo:** cada legume tem acessórios da sua classe (capacete viking, faixa ninja, chapéu de mago,
+  capa de vampiro...) e todas as armas e projéteis foram redesenhados com detalhes.
+- **Corrigido:** quando a onda acabava e você andava, as armas ficavam pra trás.
+- **O app Android agora tem o jogo completo** (o mesmo do site, embutido no APK e funcionando offline).
+
+| Escolha do personagem | Armas redesenhadas |
+|---|---|
+| ![Personagens](docs/v3_personagens.png) | ![Armas](docs/v3_armas.png) |
+| **Cyborg Cebola e o canhão laser** | **Inferno** |
+| ![Cyborg](docs/v3_cyborg.png) | ![Inferno](docs/v3_inferno.png) |
+| **Alien Hala com 8 armas** | **Mirtilo Invocador no Inferno** |
+| ![Alien](docs/v3_alien.png) | ![Mirtilo](docs/v3_mirtilo.png) |
+
+## 🧑‍🌾 Personagens
 
 | | Nome | Arma inicial | Estilo | Como liberar |
 |---|---|---|---|---|
@@ -148,53 +55,130 @@ Para aplicar: no console do Firebase, *Realtime Database → Regras*, cole o arq
 | 🎃 | Abóbora Blindada | Martelo | Armadura e vida, bem lenta | Chegar na onda 10 |
 | 🥒 | Pepino Arqueiro | Arco | Crítico e alcance, pouca vida | Derrotar 2000 insetos |
 | 🍄 | Cogumelo Místico | Varinha de Gelo | Elemental, regeneração e sorte | Vencer 1 partida |
+| 🧅 | **Cyborg Cebola** | **Canhão Laser** | Só o canhão, com **mira e tiro manuais**. Atira até 5 s seguidos; depois **superaquece** e esfria (o tempo de esfriar é proporcional ao tempo de tiro). Tem **12 itens exclusivos** que melhoram o canhão (dano, alcance, largura, feixes extras, explosão ao superaquecer) e o corpo | Derrotar 10000 insetos **e** vencer no Pesadelo |
+| 🥝 | **Vampiro Kiwi** | Faca | Ataques corpo a corpo com **+30% de roubo de vida** e **+10% de esquiva** | Chegar a 50% de roubo de vida numa partida e vencê-la |
+| 🍍 | **Alien Hala** | Bastão Elétrico | Segura **8 armas** com tentáculos tecnológicos, **+50 de alcance** e só encontra **itens Alien** (versões melhores) | Vencer com todas as armas no nível IV e mais de 100 de alcance |
+| 🍉 | **Melancia Minadora** | Estilingue | Planta **minas** enquanto anda; explodem quando um inseto chega perto | Vencer no Difícil (ou mais) |
+| 🫐 | **Mirtilo Invocador** | Varinha de Gelo | **Mirtilinhos** voam em volta e atiram sozinhos (mais um a cada 4 níveis, até 6) | Jogar 10 partidas |
+| 🥥 | **Coco Rolante** | Soco | **Atropela** os insetos: andando, quem encosta leva dano (mais velocidade e armadura = mais dano) | Coletar 20000 sementes (no total) |
 
-### Conteúdo
+**Controles do Cyborg:** no PC, `W A S D` anda, o **mouse mira** e o **clique (ou Espaço) atira**.
+No celular, o lado **esquerdo** da tela é o analógico de andar e o lado **direito** é o de mirar e atirar.
 
-- **14 armas**, **38 itens** (6 com efeito especial), **15 atributos**.
-- **6 inimigos** (lagarta, vespa, aranha que cospe, joaninha blindada, escorpião que dá investida,
-  mariposa), versões **elite** e **2 chefões** (Lesma Rainha e Formiga Imperatriz).
-- Sons e música gerados por código, vibração, recordes e partida salvos no celular.
+## 🎮 Como jogar
+
+- Arraste o dedo (ou use `W A S D`/setas) para andar. As armas **atacam sozinhas** (menos o canhão do Cyborg).
+- Os insetos soltam **sementes 🌱**: dinheiro **e** experiência. **Elites 👑** sempre deixam uma **caixa 📦**.
+- Sobreviva até o tempo da onda acabar. Entre as ondas: escolha **melhorias**, abra as **caixas** e compre na **loja**
+  (tranque 🔒 o que quiser guardar, role a loja, venda ou **combine** duas armas iguais para subir de nível).
+- A partida fica salva na loja: dá pra **continuar depois**.
+
+| Dificuldade | Ondas | |
+|---|---|---|
+| 🌱 Fácil | 20 | inimigos mais fracos |
+| 🌿 Normal | 20 | o jogo como ele deve ser |
+| 🔥 Difícil | 20 | inimigos mais fortes e numerosos |
+| 💀 Pesadelo | 20 | mais elites e muito mais dano |
+| 😈 Inferno | **35** | a máxima: mapa infernal, chefões nas ondas 10, 20, 30 e o **Besouro Infernal** na 35 |
+| ♾️ Infinito | **sem fim** | o Pesadelo sem limite de ondas (chefões a cada 10) — até onde você chega? |
+
+| | Computador | Celular / tablet |
+|---|---|---|
+| Andar | `W A S D` ou setas | arrastar o dedo |
+| Pausar / menu | `Esc` ou `P` | botão **II** |
+| Melhorias / loja | clique ou `1`–`4`, `R` = rolar, `Enter` = próxima onda | tocar |
+| Tela cheia | `F` | automática |
+
+## 👥 Multiplayer (2 a 4 jogadores)
+
+Toque em **👥 MULTIPLAYER** → **Criar sala** e passe o código de 4 letras (ou o link do **🔗 Convidar**).
+Os amigos tocam em **Entrar numa sala**. Cada um escolhe o legume e fica **Pronto**; o dono da sala escolhe
+o **modo** e a **dificuldade** e começa.
+
+**🤝 Cooperativo:** todos na mesma arena. As sementes são do time, quem cai vira fantasminha 👻 e volta na onda
+seguinte, e a loja de cada um é no próprio aparelho (a próxima onda começa quando todos ficam prontos).
+
+**⚔️ PvP (todos contra todos):**
+1. Cada um joga **15 rodadas** sozinho no próprio aparelho para montar o seu legume (cair só acaba a rodada).
+2. Quando todos terminam, **2 atributos sorteados são trocados** entre os jogadores (com 2 jogadores é uma troca;
+   com mais, cada um recebe os do próximo).
+3. Todos entram numa **arena que vai fechando**: fora do círculo você perde vida. O último de pé vence!
+
+| Troca de atributos | Duelo |
+|---|---|
+| ![Troca](docs/v3_pvp_troca.png) | ![Duelo](docs/v3_pvp_duelo.png) |
+
+**Como funciona por dentro:** o aparelho do dono da sala roda a partida; os outros mandam a posição (e a mira,
+no caso do Cyborg) e recebem a arena 20 vezes por segundo, com o próprio movimento calculado na hora.
+A conexão é **direta (WebRTC)**; o **Firebase** só serve para achar a sala, e vira o caminho de reserva se a rede
+bloquear a conexão direta (a sala mostra "direto ⚡" ou "via servidor 🌐", e o jogo mostra o ping).
+
+## 🏆 Ranking, 👤 contas, 🗳️ enquetes e 🐞 bugs
+
+Tudo fica no **Firebase Realtime Database** (plano gratuito), acessado pela API REST sem bibliotecas.
+
+- **Ranking:** os 20 melhores de cada dificuldade (site e app juntos). No fim da partida, *Enviar pro ranking*.
+- **Contas:** nome + senha, sem e-mail. O progresso (recordes, personagens liberados, partida salva) é guardado
+  num endereço calculado a partir do nome e da senha (SHA-256), então só quem sabe a senha consegue ler ou mudar.
+  Ao entrar num aparelho, o progresso dele e o da conta são juntados (fica o melhor de cada). Não dá pra recuperar
+  a senha, então anote!
+- **Enquetes:** já vêm 4 no jogo. Para **criar outras**, no console do Firebase vá em *Realtime Database → Dados*,
+  crie `polls/<id>` com `q` (a pergunta) e `o` (lista de opções). Para fechar uma, ponha `open: false`.
+- **Relatar bug / sugerir ideia:** no menu, na pausa ou nas enquetes. Os relatos aparecem no console do Firebase,
+  em `reports` (junto vão a versão do jogo e onde o jogador estava; ninguém além de você consegue ler).
+
+![Enquetes](docs/v3_enquetes.png)
+
+**Regras de segurança:** o arquivo [`firebase-rules.json`](firebase-rules.json) tem as regras de tudo isso
+(o que cada um pode ler/escrever e o tamanho de cada campo). Sempre que ele mudar, cole o arquivo inteiro em
+*Realtime Database → Regras* e clique em **Publicar**.
 
 ## 🛠️ Como o projeto funciona (para a apresentação)
 
-Tudo foi feito em **Java puro**, sem motor de jogo e sem bibliotecas: o desenho usa o
-`Canvas` do próprio Android, e os gráficos são **emojis** + formas geométricas.
+O jogo é feito em **JavaScript puro**, sem motor de jogo e sem bibliotecas: o desenho usa o `Canvas` do navegador,
+e os gráficos são **emojis** + desenhos feitos com código (acessórios dos legumes, armas, mapa do Inferno).
+O **app Android** é um programinha em Java que abre esse mesmo jogo dentro dele (WebView), sem precisar de internet.
 
 ```
-app/src/main/
-├── AndroidManifest.xml
-├── res/                         ícone (vetor) e nome do app
-└── java/com/escola/hortahostil/
-    ├── MainActivity.java        abre o jogo em tela cheia
-    ├── GameView.java            laço do jogo (60 atualizações/s) e toques na tela
-    ├── Ui.java                  desenha todas as telas e trata os botões
-    ├── Sprites.java             transforma emojis em imagens
-    ├── Sfx.java                 sintetiza os efeitos sonoros (sem arquivos de áudio!)
-    ├── Prefs.java               salva configurações e recordes
-    └── game/                    LÓGICA DO JOGO (não depende do Android)
-        ├── Game.java            ondas, inimigos, tiros, colisões, loja, level up
-        ├── Player.java          jogador e atributos
-        ├── WeaponDef/Weapon     armas
-        ├── ItemDef.java         itens
-        ├── EnemyDef/Enemy       inimigos e chefões
-        └── ...
-sim/SimTest.java                 "robô" que joga sozinho para testar e balancear
+pwa/                      o jogo (site e app usam os mesmos arquivos)
+├── index.html            página do jogo
+├── sw.js                 guarda os arquivos para funcionar offline
+├── sim.js                "robô" que joga sozinho para testar e equilibrar
+└── js/
+    ├── data.js           personagens, armas, itens, inimigos e dificuldades
+    ├── game.js           regras: ondas, combate, classes, loja, duelo PvP
+    ├── ui.js             telas, botões e controles
+    ├── art.js            desenhos: acessórios, armas, projéteis, mapa do Inferno
+    ├── sfx.js            sons e música gerados por código (sem arquivos de áudio)
+    ├── net.js            Firebase (REST + tempo real) e conexão direta (WebRTC)
+    ├── mp.js             multiplayer: salas, sincronização, cooperativo e PvP
+    ├── community.js      contas, enquetes e relatórios de bug
+    ├── ranking.js        ranking online
+    └── main.js           liga tudo e roda o laço do jogo (60 vezes por segundo)
+app/src/main/             app Android (MainActivity.java + ícone)
+tools/fake-firebase.js    Firebase "de mentira" para testar o multiplayer sem internet
+firebase-rules.json       regras de segurança do banco
 ```
 
-Conceitos usados: laço de jogo com passo fixo, máquina de estados (menu → jogo → level up → loja),
-colisão entre círculos, vetores para movimento e mira, probabilidade (raridade dos itens, crítico, esquiva)
-e herança/interfaces em Java.
+Conceitos usados: laço de jogo com passo fixo, máquina de estados, colisão entre círculos e entre círculo e
+segmento (o laser), vetores para movimento e mira, probabilidade, previsão de movimento na rede, criptografia
+(hash SHA-256 nas contas) e comunicação cliente/servidor e ponto a ponto.
 
-### Compilar o APK você mesmo
-
-Não precisa de Android Studio. Com Java 17+, `curl`, `zip` e `npm` instalados (Linux):
+### Testar e compilar
 
 ```bash
-./build.sh          # gera HortaHostil.apk
-./build.sh sim 20   # o robô joga 20 partidas e mostra o resultado
+npx http-server pwa              # abre o jogo em http://localhost:8080
+node pwa/sim.js 12               # o robô joga 12 partidas em cada dificuldade
+node pwa/sim.js coop 4           # partidas cooperativas com 2, 3 e 4 robôs
+node pwa/sim.js duel 6           # 6 duelos PvP (15 rodadas de preparação + arena)
+node tools/fake-firebase.js 9000 # Firebase local: abra o jogo com ?db=http://localhost:9000
+./build.sh                       # gera o HortaHostil.apk (Java 17+, curl, zip e npm)
 ```
 
-O script baixa as ferramentas do Android que faltam (aapt2, d8, android.jar) para a pasta `.tools/`.
-A chave em `keystore/horta.p12` (senha `android`) assina o APK; mantenha a mesma chave para que
-versões novas instalem por cima da antiga.
+O `build.sh` baixa as ferramentas do Android que faltam (aapt2, d8, android.jar) para `.tools/`, copia a pasta
+`pwa/` para dentro do app e assina com a chave `keystore/horta.p12` (senha `android`; mantenha a mesma chave para
+que as versões novas instalem por cima). A versão antiga do app, com o jogo inteiro escrito em Java, está no
+histórico do repositório (commit `ef5c9f3`).
+
+O site é publicado pelo **GitHub Pages** com o workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml),
+a cada push que muda a pasta `pwa/` ou o APK.

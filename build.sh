@@ -2,8 +2,8 @@
 # Compila o APK do Horta Hostil SEM Android Studio/Gradle.
 # Precisa apenas de: Java (JDK 17+), curl, zip e npm (para baixar o aapt2).
 #
-#   ./build.sh        -> gera HortaHostil.apk
-#   ./build.sh sim    -> roda o simulador (joga sozinho no PC para testar a lógica)
+#   ./build.sh        -> gera HortaHostil.apk (o jogo da pasta pwa/ vai dentro do app)
+#   ./build.sh sim    -> o robô joga sozinho para testar a lógica (precisa do Node.js)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -25,10 +25,7 @@ JAVAC_FLAGS=(-encoding UTF-8 -source 8 -target 8 -Xlint:-options -nowarn)
 step() { echo; echo "==> $*"; }
 
 if [[ "${1:-}" == "sim" ]]; then
-    step "Compilando o simulador"
-    rm -rf "$BUILD/sim" && mkdir -p "$BUILD/sim"
-    javac -encoding UTF-8 -d "$BUILD/sim" $(find "$SRC/java/com/escola/hortahostil/game" -name '*.java') "$ROOT/sim/SimTest.java"
-    java -cp "$BUILD/sim" SimTest "${@:2}"
+    node "$ROOT/pwa/sim.js" "${@:2}"
     exit 0
 fi
 
@@ -63,11 +60,16 @@ mkdir -p "$BUILD/gen" "$BUILD/classes" "$BUILD/dex" "$BUILD/signer"
 # ---------------------------------------------------------------------------
 # 2) Recursos (manifest, icone, textos)
 # ---------------------------------------------------------------------------
+step "Copiando o jogo (pasta pwa/) para dentro do app"
+mkdir -p "$BUILD/assets/www"
+(cd "$ROOT/pwa" && cp -r index.html manifest.webmanifest js icons "$BUILD/assets/www/")
+
 step "Compilando recursos (aapt2)"
 "$AAPT2" compile --dir "$SRC/res" -o "$BUILD/res.zip"
 "$AAPT2" link -I "$ANDROID_JAR" \
     --manifest "$SRC/AndroidManifest.xml" \
     --java "$BUILD/gen" \
+    -A "$BUILD/assets" \
     -o "$BUILD/base.apk" \
     "$BUILD/res.zip"
 

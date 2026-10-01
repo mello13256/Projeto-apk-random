@@ -841,7 +841,7 @@ class Game {
     const cy = p.cy;
     return {
       dps: (W_LASER.baseDamage + p.stats[Stat.RANGED] * 2 + p.stats[Stat.ELEMENTAL] * 1.5)
-        * p.damageMult() * (1 + cy.dmg / 100) * (1 + 0.07 * (p.level - 1)) * this.atkFactor(p),
+        * p.damageMult() * (1 + cy.dmg / 100) * (1 + 0.035 * (p.level - 1)) * Math.sqrt(this.atkFactor(p)),
       range: Math.max(150, W_LASER.range + p.stats[Stat.RANGE] + cy.range),
       width: 14 + cy.width,
       fireTime: LASER_FIRE_TIME * (1 + cy.time / 100),
@@ -1082,8 +1082,10 @@ class Game {
   }
 
   spawnEnemy(d, x, y) {
-    const maxHp = d.hp * (d.boss ? this.coopHp() * this.bossScale(d) : this.hpMult()) * DIFF_HP[this.difficulty];
-    const baseDmg = Math.max(1, Math.round(d.damage + d.damagePerWave * (this.wave - 1)));
+    // Infinito: depois da onda 20 os insetos ficam cada vez mais fortes (senão nunca acaba)
+    const extra = this.difficulty === DIFF_ENDLESS && this.pvp !== 'prep' ? Math.max(0, this.wave - 20) : 0;
+    const maxHp = d.hp * (d.boss ? this.coopHp() * this.bossScale(d) : this.hpMult()) * DIFF_HP[this.difficulty] * Math.pow(1.09, extra);
+    const baseDmg = Math.max(1, Math.round((d.damage + d.damagePerWave * (this.wave - 1)) * Math.pow(1.07, extra)));
     const e = {
       id: this.nextEnemyId++, def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
       speed: d.speed * (0.9 + this.rng.float() * 0.2),

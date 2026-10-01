@@ -206,7 +206,7 @@ class Ui {
       const diff = g.difficulty;
       Ranking.submit(diff, {
         name, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY',
-        kills: g.kills, level: p.level, platform: 'web',
+        kills: g.kills, level: p.level, platform: IS_APP ? 'android' : 'web',
       }).then((id) => {
         this.submitState = 'sent';
         this.rank.myId = id;
@@ -2045,6 +2045,7 @@ class Ui {
 
 /** No celular: tela cheia e trava na horizontal (quando o navegador deixa). */
 function enterMobileFullscreen() {
+  if (IS_APP) return; // o app já é tela cheia
   const el = document.documentElement;
   const lock = () => {
     try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* ignora */ }
