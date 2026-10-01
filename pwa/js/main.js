@@ -102,26 +102,45 @@
 
   // --- Laço principal: lógica a 60 passos/s, desenho a cada quadro ---
   const STEP = 1 / 60;
-  let last = performance.now(), acc = 0;
-  function frame(now) {
-    const dt = Math.min(0.1, (now - last) / 1000);
-    last = now;
+  let lastStep = performance.now(), lastDraw = lastStep, acc = 0;
+  /** Avança a lógica até "agora" (pode ser chamado pelo desenho ou pelo relógio de reserva). */
+  function advance(now) {
+    const dt = Math.min(0.25, Math.max(0, now - lastStep) / 1000);
+    lastStep = now;
     acc += dt;
     let steps = 0;
-    while (acc >= STEP && steps < 5) {
+    while (acc >= STEP && steps < 15) {
       const [jx, jy] = ui.menuOpen() ? [0, 0] : ui.moveVector();
       if (mp.isGuest() && mp.inGame) mp.guestStep(STEP, jx, jy); // convidado: a arena vem do anfitrião
       else game.update(STEP, jx, jy);
       acc -= STEP;
       steps++;
     }
-    if (steps === 5) acc = 0;
+    if (steps === 15) acc = 0;
     mp.tick(dt);
+  }
+  function frame(now) {
+    now = performance.now();
+    advance(now);
+    const dt = Math.min(0.1, (now - lastDraw) / 1000);
+    lastDraw = now;
     const hovering = ui.draw(ctx, dt);
     canvas.style.cursor = hovering ? 'pointer' : 'default';
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // Relógio de reserva para o multiplayer: com a janela escondida ou minimizada, o navegador
+  // para de desenhar (e o jogo do dono da sala congelaria para todos). Um "worker" continua
+  // batendo e a partida segue rodando.
+  try {
+    const src = 'setInterval(function () { postMessage(0); }, 20);';
+    const ticker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    ticker.onmessage = () => {
+      const now = performance.now();
+      if (mp.active && now - lastStep > 30) advance(now);
+    };
+  } catch (e) { /* sem worker: só o laço normal */ }
 
   // --- Link de convite (?sala=CODIGO) ou atalho para o multiplayer (#mp, usado pelo app Android) ---
   const params = new URLSearchParams(location.search);
