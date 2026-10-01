@@ -74,9 +74,34 @@ class Ui {
     this.showHelp = false;
     this.toast = ''; this.toastTime = 0;
     this.arena = null;
+    this.touch = false;      // true = celular/tablet (toque); false = teclado e mouse
+    this.rotated = false;    // tela em pé: o jogo é desenhado deitado (girado 90°)
+    this.matrix = [1, 0, 0, 1, 0, 0];
+    this.canvasW = 1280; this.canvasH = 720; this.offY = 0;
+    this.tipItem = null; this.tipTime = 0;
   }
 
-  setSize(w, h) { this.scale = h / VH; this.vw = w / this.scale; }
+  /**
+   * Ajusta o jogo ao tamanho do canvas (em pixels). Se rotate = true (celular em pé),
+   * o jogo é desenhado girado 90° para continuar na horizontal.
+   * A área do jogo nunca fica mais estreita que 4:3; o que sobra vira faixa.
+   */
+  setSize(w, h, rotate) {
+    this.canvasW = w; this.canvasH = h;
+    this.rotated = !!rotate;
+    const lw = rotate ? h : w, lh = rotate ? w : h; // tamanho "deitado"
+    this.scale = Math.min(lh / VH, lw / 960);
+    this.vw = lw / this.scale;
+    this.offY = (lh - VH * this.scale) / 2;
+    const s = this.scale;
+    this.matrix = rotate ? [0, s, -s, 0, w - this.offY, 0] : [s, 0, 0, s, 0, this.offY];
+  }
+
+  /** Pixels do canvas -> coordenadas virtuais do jogo. */
+  toVirtual(px, py) {
+    if (this.rotated) return [py / this.scale, (this.canvasW - this.offY - px) / this.scale];
+    return [px / this.scale, (py - this.offY) / this.scale];
+  }
 
   // ------------------------------------------------------------------
   // Entrada
@@ -105,7 +130,7 @@ class Ui {
   }
 
   onMove(id, x, y) {
-    if (id === 'mouse' || id === 1) { this.mouseX = x; this.mouseY = y; }
+    if (id === 'mouse') { this.mouseX = x; this.mouseY = y; }
     const j = this.joy;
     if (j && j.id === id) {
       j.x = x; j.y = y;
@@ -176,7 +201,14 @@ class Ui {
   doAction(action, arg) {
     const g = this.game, p = g.player;
     switch (action) {
-      case 'PLAY': g.state = 'CHAR_SELECT'; break;
+      case 'PLAY':
+        g.state = 'CHAR_SELECT';
+        if (this.touch) enterMobileFullscreen();
+        break;
+      case 'ITEM':
+        if (this.tipItem === arg && this.tipTime > 0) this.tipTime = 0;
+        else { this.tipItem = arg; this.tipTime = 3; }
+        break;
       case 'SOUND': this.prefs.data.sound = !this.prefs.data.sound; this.prefs.save(); this.sfx.enabled = this.prefs.data.sound; break;
       case 'FULLSCREEN': toggleFullscreen(); break;
       case 'HELP': this.showHelp = !this.showHelp; break;
@@ -233,8 +265,15 @@ class Ui {
     this.buttons = [];
     this.hovering = false;
     this.deferred = null;
+    if (this.tipTime > 0) this.tipTime -= dt;
     ctx.save();
-    ctx.setTransform(this.scale, 0, 0, this.scale, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#121A0D';
+    ctx.fillRect(0, 0, this.canvasW, this.canvasH);
+    ctx.setTransform(...this.matrix);
+    ctx.beginPath();
+    ctx.rect(0, 0, this.vw, VH);
+    ctx.clip();
     ctx.fillStyle = C.BG;
     ctx.fillRect(0, 0, this.vw, VH);
     const g = this.game;
@@ -275,10 +314,11 @@ class Ui {
     this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 315, 26, '#E8F5D0', 'center');
     this.button(cx - 170, 360, 340, 90, 'JOGAR', 'PLAY', 0, C.GREEN, true, 44);
     this.button(cx - 340, 470, 210, 66, this.prefs.data.sound ? 'Som: SIM' : 'Som: NÃO', 'SOUND', 0, C.GRAY, true, 26);
-    this.button(cx - 105, 470, 210, 66, 'Tela cheia', 'FULLSCREEN', 0, C.GRAY, true, 26);
+    const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+    this.button(cx - 105, 470, 210, 66, 'Tela cheia', 'FULLSCREEN', 0, C.GRAY, fsOk, 26);
     this.button(cx + 130, 470, 210, 66, 'Como jogar', 'HELP', 0, C.GRAY, true, 26);
     this.text('Melhor onda: ' + this.prefs.data.bestWave + '   •   Vitórias: ' + this.prefs.data.wins, cx, 590, 26, '#CFE3B8', 'center');
-    this.text('Enter: jogar  •  H: ajuda', cx, 635, 20, 'rgba(255,255,255,0.55)', 'center');
+    if (!this.touch) this.text('Enter: jogar  •  H: ajuda  •  F: tela cheia', cx, 635, 20, 'rgba(255,255,255,0.55)', 'center');
     this.text('Projeto escolar • feito com JavaScript puro', cx, 690, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
@@ -305,8 +345,17 @@ class Ui {
     this.backdrop('HELP');
     this.panel(x, y, w, h);
     this.text('COMO JOGAR', this.vw / 2, y + 60, 40, C.GOLD, 'center');
-    const lines = [
-      '• Ande com W A S D ou as setas (no celular: arraste o dedo).',
+    const lines = this.touch ? [
+      '• Arraste o dedo em qualquer lugar da tela para andar.',
+      '• Suas armas atacam SOZINHAS o inimigo mais próximo.',
+      '• Inimigos derrotados soltam sementes 🌱: pegue-as!',
+      '• Sementes dão experiência e compram coisas na loja.',
+      '• Sobreviva até o tempo da onda acabar. II = pausa.',
+      '• Entre as ondas: escolha melhorias e compre na loja.',
+      '• Duas armas iguais do mesmo nível viram uma mais forte.',
+      '• Sobreviva às 20 ondas para salvar a horta!',
+    ] : [
+      '• Ande com W A S D ou as setas (ou arraste o mouse).',
       '• Suas armas atacam SOZINHAS o inimigo mais próximo.',
       '• Inimigos derrotados soltam sementes 🌱: pegue-as!',
       '• Sementes dão experiência e compram coisas na loja.',
@@ -344,7 +393,7 @@ class Ui {
       }
     });
     this.button(30, VH - 92, 220, 70, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
-    this.text('Setas: escolher  •  Enter: começar', this.vw / 2, VH - 48, 20, 'rgba(255,255,255,0.55)', 'center');
+    if (!this.touch) this.text('Setas: escolher  •  Enter: começar', this.vw / 2, VH - 48, 20, 'rgba(255,255,255,0.55)', 'center');
     this.button(this.vw - 330, VH - 96, 300, 78, 'COMEÇAR!', 'START', 0, C.GREEN, true, 38);
   }
 
@@ -631,7 +680,8 @@ class Ui {
       this.ctx.strokeStyle = 'rgba(255,255,255,0.4)'; this.ctx.lineWidth = 3; this.ctx.stroke();
       this.circle(j.ox + clamp(j.x - j.ox, -R, R), j.oy + clamp(j.y - j.oy, -R, R), 32, 'rgba(255,255,255,0.6)');
     } else if (g.wave === 1 && g.waveTime < 6) {
-      this.text('Use W A S D ou as setas para andar', vw / 2, VH - 110, 30, 'rgba(255,255,255,0.8)', 'center');
+      const hint = this.touch ? 'Arraste o dedo para andar' : 'Use W A S D ou as setas para andar';
+      this.text(hint, vw / 2, VH - 110, 30, 'rgba(255,255,255,0.8)', 'center');
     }
   }
 
@@ -643,7 +693,7 @@ class Ui {
     const statsW = vw < 1200 ? 250 : 300;
     const cx = (vw - statsW) / 2;
     this.text('PAUSADO', cx, 120, 64, C.GOLD, 'center');
-    this.button(cx - 170, 180, 340, 84, 'Continuar (Esc)', 'RESUME', 0, C.GREEN, true, 34);
+    this.button(cx - 170, 180, 340, 84, this.touch ? 'Continuar' : 'Continuar (Esc)', 'RESUME', 0, C.GREEN, true, 34);
     this.button(cx - 170, 285, 340, 70, 'Desistir', 'QUIT', 0, C.RED, true, 30);
     this.drawWeaponRow(40, 420, cx * 2 - 80, false);
     this.drawItemsGrid(40, 570, cx * 2 - 80, 130);
@@ -657,7 +707,7 @@ class Ui {
     const statsW = this.vw < 1200 ? 250 : 300;
     const areaW = this.vw - statsW - 48;
     this.text('SUBIU DE NÍVEL!', 24 + areaW / 2, 70, 52, '#7CFF6B', 'center');
-    let sub = 'Nível ' + (p.level - g.levelsPending + 1) + ' • escolha uma melhoria (1-4)';
+    let sub = 'Nível ' + (p.level - g.levelsPending + 1) + ' • escolha uma melhoria' + (this.touch ? '' : ' (1-4)');
     if (g.levelsPending > 1) sub += ' (+' + (g.levelsPending - 1) + ' depois)';
     this.text(sub, 24 + areaW / 2, 112, 24, '#E8F5D0', 'center');
     const gap = 16, cw = (areaW - gap * 3) / 4, ch = 330;
@@ -674,7 +724,7 @@ class Ui {
     }
     const cost = g.levelRerollCost();
     this.seedCounter(24, VH - 70, p.materials);
-    this.buttonSeed(24 + areaW / 2 - 150, VH - 110, 300, 76, cost, 'LEVEL_REROLL', 0, C.ORANGE, p.materials >= cost, 'Rolar (R) ');
+    this.buttonSeed(24 + areaW / 2 - 150, VH - 110, 300, 76, cost, 'LEVEL_REROLL', 0, C.ORANGE, p.materials >= cost, this.touch ? 'Rolar ' : 'Rolar (R) ');
     this.drawStatsPanel(this.vw - statsW - 16, 16, statsW, VH - 32);
   }
 
@@ -734,7 +784,7 @@ class Ui {
     const sx = vw - statsW - 16;
     this.drawStatsPanel(sx, 16, statsW, VH - 32 - 170);
     const cost = g.shopRerollCost();
-    this.buttonSeed(sx, VH - 172, statsW, 66, cost, 'REROLL', 0, C.ORANGE, p.materials >= cost, 'Rolar (R) ');
+    this.buttonSeed(sx, VH - 172, statsW, 66, cost, 'REROLL', 0, C.ORANGE, p.materials >= cost, this.touch ? 'Rolar ' : 'Rolar (R) ');
     this.button(sx, VH - 96, statsW, 80, 'Próxima onda ▶', 'NEXT', 0, C.GREEN, true, 30);
 
     if (this.popupWeapon >= 0 && this.popupWeapon < p.weapons.length) this.drawWeaponPopup();
@@ -783,7 +833,7 @@ class Ui {
       }
     }
     if (clickable && w > 1000) {
-      this.text('(clique numa arma para vender ou combinar)', x + 190, y - 10, 17, 'rgba(255,255,255,0.6)', 'left');
+      this.text(this.touch ? '(toque numa arma para vender ou combinar)' : '(clique numa arma para vender ou combinar)', x + 190, y - 10, 17, 'rgba(255,255,255,0.6)', 'left');
     }
   }
 
@@ -802,7 +852,9 @@ class Ui {
       this.card(ix, iy, s, s, it.tier, false);
       this.emoji(it.icon, ix + s / 2, iy + s / 2, s * 0.7);
       if (n > 1) this.text('x' + n, ix + s - 3, iy + s - 3, 16, '#FFFFFF', 'right');
-      if (this.isHover(ix, iy, s, s)) this.tooltip(it, ix, iy + s + 6);
+      this.register(ix, iy, s, s, 'ITEM', it, true);
+      const pinned = this.tipItem === it && this.tipTime > 0;
+      if (pinned || (!this.touch && this.isHover(ix, iy, s, s))) this.tooltip(it, ix, iy + s + 6);
       i++;
     }
   }
@@ -880,6 +932,7 @@ class Ui {
   // ------------------------------------------------------------------
 
   isHover(x, y, w, h) {
+    if (this.touch) return false;
     return this.mouseX >= x && this.mouseX <= x + w && this.mouseY >= y && this.mouseY <= y + h;
   }
 
@@ -920,10 +973,8 @@ class Ui {
   drawButtonBase(x, y, w, h, color, hover) {
     const ctx = this.ctx;
     this.roundRect(x, y + 5, w, h - 5, 16, '#00000066');
-    ctx.save();
-    ctx.filter = 'brightness(0.6)';
     this.roundRect(x, y + 5, w, h - 5, 16, color);
-    ctx.restore();
+    this.roundRect(x, y + 5, w, h - 5, 16, 'rgba(0,0,0,0.4)');
     const lift = hover ? -2 : 0;
     this.roundRect(x, y + lift, w, h - 5, 16, color);
     if (hover) this.roundRect(x, y + lift, w, h - 5, 16, 'rgba(255,255,255,0.15)');
@@ -931,6 +982,7 @@ class Ui {
   }
 
   keyBadge(k, x, y) {
+    if (this.touch) return;
     this.roundRect(x, y, 26, 26, 6, 'rgba(0,0,0,0.55)', 'rgba(255,255,255,0.4)', 1.5);
     this.text(k, x + 13, y + 19, 16, '#FFFFFF', 'center');
   }
@@ -1015,6 +1067,21 @@ class Ui {
     if (line) this.text(line, x, ly, size, color, align);
     return ly + size * 1.2;
   }
+}
+
+/** No celular: tela cheia e trava na horizontal (quando o navegador deixa). */
+function enterMobileFullscreen() {
+  const el = document.documentElement;
+  const lock = () => {
+    try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* ignora */ }
+  };
+  if (document.fullscreenElement) { lock(); return; }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return;
+  try {
+    const r = req.call(el, { navigationUI: 'hide' });
+    if (r && r.then) r.then(lock).catch(() => {});
+  } catch (e) { /* ignora */ }
 }
 
 function toggleFullscreen() {

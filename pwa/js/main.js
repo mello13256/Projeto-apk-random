@@ -17,32 +17,47 @@
     runEnded: (won, wave) => prefs.recordRun(won, wave),
   };
 
+  // --- Celular ou computador? ---
+  // Começa pelo tipo de tela; depois segue o que o jogador usar de verdade.
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const touchCapable = coarse || navigator.maxTouchPoints > 0;
+  ui.touch = coarse;
+  const setTouch = (on) => { ui.touch = on; };
+
   // --- Tamanho da tela (nítido em telas de alta densidade) ---
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.round((canvas.clientWidth || window.innerWidth) * dpr);
     canvas.height = Math.round((canvas.clientHeight || window.innerHeight) * dpr);
-    ui.setSize(canvas.width, canvas.height);
+    // Celular em pé: desenha o jogo girado, assim dá pra jogar segurando deitado
+    // mesmo com a rotação automática desligada.
+    const rotate = touchCapable && canvas.height > canvas.width * 1.1;
+    ui.setSize(canvas.width, canvas.height, rotate);
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 150));
   resize();
 
   // --- Mouse e toque (Pointer Events cobrem os dois) ---
   const toVirtual = (e) => {
     const r = canvas.getBoundingClientRect();
-    const k = canvas.height / r.height / ui.scale;
-    return [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
+    return ui.toVirtual((e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height);
   };
   const pid = (e) => (e.pointerType === 'mouse' ? 'mouse' : e.pointerId);
   canvas.addEventListener('pointerdown', (e) => {
     sfx.unlock();
+    setTouch(e.pointerType !== 'mouse');
     canvas.setPointerCapture(e.pointerId);
     const [x, y] = toVirtual(e);
     ui.onMove(pid(e), x, y);
     ui.onDown(pid(e), x, y);
     e.preventDefault();
   });
-  canvas.addEventListener('pointermove', (e) => { const [x, y] = toVirtual(e); ui.onMove(pid(e), x, y); });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse' && (e.movementX || e.movementY)) setTouch(false);
+    const [x, y] = toVirtual(e);
+    ui.onMove(pid(e), x, y);
+  });
   const up = (e) => { const [x, y] = toVirtual(e); ui.onUp(pid(e), x, y); };
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', () => ui.releaseAll());
@@ -53,6 +68,7 @@
   const GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
   window.addEventListener('keydown', (e) => {
     sfx.unlock();
+    setTouch(false);
     if (GAME_KEYS.includes(e.code)) e.preventDefault();
     if (e.code === 'KeyF' && !e.repeat) { toggleFullscreen(); return; }
     ui.keys.add(e.code);

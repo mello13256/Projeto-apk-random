@@ -14,20 +14,30 @@ legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a ho
 > O Play Protect pode avisar que o app é "desconhecido". É normal: o app não veio da Play Store.
 > É só tocar em *Instalar mesmo assim*.
 
-## 💻 Versão para computador (PWA)
+## 💻📱 Versão para PC e celular (PWA)
 
-A pasta [`pwa/`](pwa) tem o mesmo jogo feito em **HTML5 + JavaScript**, para jogar no navegador
-do computador e **instalar como aplicativo** (funciona até sem internet depois de instalado).
+A pasta [`pwa/`](pwa) tem o mesmo jogo feito em **HTML5 + JavaScript**. Ele roda no navegador do
+**computador e do celular** e pode ser **instalado como aplicativo** (funciona até sem internet depois de instalado).
+O jogo percebe sozinho se você está usando teclado/mouse ou toque e muda os controles e as dicas na tela.
 
-**Controles no computador:** `W A S D` ou setas = andar • `Esc`/`P` = pausar • `F` = tela cheia •
-`1`–`4` = escolher melhoria / comprar na loja • `R` = rolar • `Enter` = próxima onda.
-O mouse também funciona em todos os botões (e no celular, dá pra jogar arrastando o dedo).
+| | Computador | Celular / tablet |
+|---|---|---|
+| Andar | `W A S D` ou setas (ou arrastar o mouse) | arrastar o dedo (joystick) |
+| Pausar | `Esc` ou `P` | botão **II** |
+| Melhorias / loja | clique ou teclas `1`–`4`, `R` = rolar, `Enter` = próxima onda | tocar nos cartões |
+| Ver o que um item faz | passar o mouse | tocar no item |
+| Tela cheia | `F` ou botão do menu | automática ao tocar em **Jogar** |
+
+No celular o jogo fica sempre deitado: se o aparelho estiver em pé (ou com a rotação automática
+desligada), ele é desenhado de lado, é só virar o celular.
 
 **Como publicar e instalar:**
 1. No GitHub, vá em *Settings → Pages* e em *Source* escolha **GitHub Actions**.
 2. Junte este branch com o `main`: o workflow `Publicar PWA` coloca o jogo no ar em
    `https://<seu-usuario>.github.io/<repositorio>/`.
-3. Abra o link no Chrome ou Edge e clique no ícone de **instalar** (⊕) na barra de endereço.
+3. **No computador:** abra o link no Chrome ou Edge e clique no ícone de **instalar** (⊕) na barra de endereço.
+   **No Android:** abra no Chrome, menu ⋮ → **Instalar app** (ou *Adicionar à tela inicial*).
+   **No iPhone:** abra no Safari, botão Compartilhar → **Adicionar à Tela de Início**.
    O jogo vira um app com ícone próprio, em tela cheia.
 
 Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
