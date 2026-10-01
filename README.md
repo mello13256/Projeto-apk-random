@@ -29,8 +29,9 @@ depois da primeira visita.
 - **⚔️ Modo PvP** no multiplayer: 15 rodadas para cada um se preparar e depois um duelo numa arena que fecha.
 - **👤 Contas:** salve o progresso na nuvem e continue em outro aparelho (site ou app).
 - **🗳️ Enquetes** da comunidade e **🐞 Relatar bug / sugerir ideia** direto do jogo.
-- **Visual novo:** cada legume tem acessórios da sua classe (capacete viking, faixa ninja, chapéu de mago,
-  capa de vampiro...) e todas as armas e projéteis foram redesenhados com detalhes.
+- **Visual novo:** cada legume tem pequenas partículas animadas em volta que mostram o que ele é (brasas na
+  Pimenta, pipocas no Milho, estrelinhas ninja na Cenoura, gotas no Vampiro, pixels no Cyborg...) e todas as
+  armas e projéteis foram redesenhados com detalhes.
 - **Corrigido:** quando a onda acabava e você andava, as armas ficavam pra trás.
 - **O app Android agora tem o jogo completo** (o mesmo do site, embutido no APK e funcionando offline).
 
@@ -136,7 +137,7 @@ Tudo fica no **Firebase Realtime Database** (plano gratuito), acessado pela API 
 ## 🛠️ Como o projeto funciona (para a apresentação)
 
 O jogo é feito em **JavaScript puro**, sem motor de jogo e sem bibliotecas: o desenho usa o `Canvas` do navegador,
-e os gráficos são **emojis** + desenhos feitos com código (acessórios dos legumes, armas, mapa do Inferno).
+e os gráficos são **emojis** + desenhos feitos com código (partículas dos legumes, armas, mapa do Inferno).
 O **app Android** é um programinha em Java que abre esse mesmo jogo dentro dele (WebView), sem precisar de internet.
 
 ```
@@ -148,7 +149,7 @@ pwa/                      o jogo (site e app usam os mesmos arquivos)
     ├── data.js           personagens, armas, itens, inimigos e dificuldades
     ├── game.js           regras: ondas, combate, classes, loja, duelo PvP
     ├── ui.js             telas, botões e controles
-    ├── art.js            desenhos: acessórios, armas, projéteis, mapa do Inferno
+    ├── art.js            desenhos: partículas dos legumes, armas, projéteis, mapa do Inferno
     ├── sfx.js            sons e música gerados por código (sem arquivos de áudio)
     ├── net.js            Firebase (REST + tempo real) e conexão direta (WebRTC)
     ├── mp.js             multiplayer: salas, sincronização, cooperativo e PvP

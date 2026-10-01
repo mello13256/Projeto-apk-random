@@ -9,8 +9,8 @@ const Art = {
   // ------------------------------------------------------------------
 
   /**
-   * Desenha um personagem com olhos e acessórios.
-   * o = {facingLeft, lookX, lookY, bob, moving, alpha, firing}
+   * Desenha um personagem com olhos e, em volta, pequenas partículas animadas que mostram o que ele é.
+   * o = {facingLeft, lookX, lookY, bob, moving, alpha}
    */
   drawHero(c, x, y, size, o) {
     o = o || {};
@@ -22,279 +22,166 @@ const Art = {
     ctx.scale(1 - bob * 0.5, 1 + bob);
     ctx.scale(k, k);
     if (o.alpha !== undefined) ctx.globalAlpha *= o.alpha;
-    this.heroBack(c.look, left, t, o);
+    this.heroParticles(c.look, t, o, false);
     ctx.save();
     if (!left) ctx.scale(-1, 1);
     this.emoji(c.icon, 0, 0, 68);
     ctx.restore();
     const lx = o.lookX === undefined ? (left ? -1 : 1) : o.lookX, ly = o.lookY || 0;
-    if (c.look === 'cyborg') this.cyborgEyes(left, lx, ly, t);
-    else this.drawEyes(0, -4, 1, lx, ly);
-    this.heroFront(c.look, left, t, o);
+    this.drawEyes(0, -4, 1, lx, ly);
+    this.heroParticles(c.look, t, o, true);
     ctx.restore();
   },
 
-  /** Coisas atrás do corpo (capa do vampiro). */
-  heroBack(look, left, t, o) {
+  /**
+   * Partículas de cada classe. front = false desenha as que ficam atrás do corpo.
+   * Tudo é calculado a partir do tempo (sem guardar estado), então serve pra qualquer tela.
+   */
+  heroParticles(look, t, o, front) {
     const ctx = this.ctx;
-    if (look === 'vampire') {
-      const wave = Math.sin(t * 4) * 4 + (o.moving ? 6 : 0);
-      ctx.fillStyle = '#1A0A14';
-      ctx.beginPath();
-      ctx.moveTo(-24, -16);
-      ctx.quadraticCurveTo(-46 - wave, 14, -36 - wave, 40);
-      ctx.lineTo(36 + wave, 40);
-      ctx.quadraticCurveTo(46 + wave, 14, 24, -16);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#B0102A';
-      ctx.beginPath();
-      ctx.moveTo(-18, -12);
-      ctx.quadraticCurveTo(-36 - wave, 14, -28 - wave, 36);
-      ctx.lineTo(28 + wave, 36);
-      ctx.quadraticCurveTo(36 + wave, 14, 18, -12);
-      ctx.closePath();
-      ctx.fill();
-      // gola alta
-      ctx.fillStyle = '#1A0A14';
-      for (const s of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(s * 10, -8); ctx.lineTo(s * 32, -30); ctx.lineTo(s * 26, -6); ctx.closePath(); ctx.fill();
+    const a0 = ctx.globalAlpha;
+    // órbita: n partículas girando numa elipse; metade fica atrás do corpo, metade na frente
+    const orbit = (n, rx, ry, speed, draw) => {
+      for (let i = 0; i < n; i++) {
+        const a = t * speed + i * Math.PI * 2 / n;
+        const isFront = Math.sin(a) > 0;
+        if (isFront !== front) continue;
+        draw(Math.cos(a) * rx, Math.sin(a) * ry, i, a);
       }
-    } else if (look === 'racer' && o.moving) {
-      // linhas de velocidade
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
-      const d = left ? 1 : -1;
-      for (let i = 0; i < 3; i++) {
-        const yy = -14 + i * 14, off = (t * 160 + i * 23) % 30;
-        ctx.beginPath(); ctx.moveTo(d * (36 + off), yy); ctx.lineTo(d * (56 + off), yy); ctx.stroke();
+    };
+    // subindo: partículas nascem embaixo e somem lá em cima
+    const rise = (n, w, h, speed, draw) => {
+      if (!front) return;
+      for (let i = 0; i < n; i++) {
+        const u = (t * speed + i / n) % 1;
+        const x = (i % 2 ? 1 : -1) * (20 + Math.abs(Math.sin(i * 12.9 + t)) * (w - 14));
+        ctx.globalAlpha = a0 * Math.sin(u * Math.PI);
+        draw(x, 24 - u * h, i, u);
       }
-    } else if (look === 'summoner') {
-      // círculo mágico no chão
-      ctx.save();
-      ctx.translate(0, 30);
-      ctx.scale(1, 0.35);
-      ctx.rotate(t * 0.8);
-      ctx.strokeStyle = 'rgba(120,140,255,0.55)'; ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(0, 0, 40, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath();
-      for (let i = 0; i < 6; i++) { const a = i * Math.PI * 2 / 6; ctx.lineTo(Math.cos(a) * 40, Math.sin(a) * 40); }
-      ctx.closePath(); ctx.stroke();
-      ctx.restore();
-    }
-  },
-
-  /** Olhos do Cyborg: um normal e um visor vermelho. */
-  cyborgEyes(left, lx, ly, t) {
-    const ctx = this.ctx;
-    const s = left ? -1 : 1; // o visor fica do lado da frente
-    this.drawEyeOne(-10 * s, -4, 1, lx, ly);
-    // placa de metal
-    ctx.fillStyle = '#8C96A3';
-    ctx.beginPath();
-    ctx.moveTo(2 * s, -26); ctx.lineTo(26 * s, -22); ctx.lineTo(28 * s, 8); ctx.lineTo(4 * s, 10); ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#3B4048'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = '#C9D1DB';
-    for (const [rx, ry] of [[6, -20], [22, -18], [8, 4], [23, 4]]) { ctx.beginPath(); ctx.arc(rx * s, ry, 1.8, 0, Math.PI * 2); ctx.fill(); }
-    // olho de LED
-    const glow = 0.7 + 0.3 * Math.sin(t * 6);
-    const g = ctx.createRadialGradient(14 * s, -5, 1, 14 * s, -5, 14);
-    g.addColorStop(0, 'rgba(255,60,60,' + glow + ')');
-    g.addColorStop(1, 'rgba(255,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(14 * s, -5, 14, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#220000';
-    ctx.beginPath(); ctx.ellipse(14 * s, -5, 8, 6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#FF2A2A';
-    ctx.beginPath(); ctx.arc(14 * s + lx * 2.5, -5 + ly * 2, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#FFD0D0';
-    ctx.beginPath(); ctx.arc(14 * s + lx * 2.5 - 1.5, -6.5 + ly * 2, 1.4, 0, Math.PI * 2); ctx.fill();
-  },
-
-  drawEyeOne(x, y, s, lx, ly) {
-    const r = 8 * s;
-    const len = Math.hypot(lx, ly);
-    if (len > 0.01) { lx /= len; ly /= len; }
-    this.circle(x, y, r + 2 * s, '#000000');
-    this.circle(x, y, r, '#FFFFFF');
-    this.circle(x + lx * r * 0.4, y + ly * r * 0.4, r * 0.48, '#111111');
-  },
-
-  /** Acessórios na frente: chapéus, faixas, capacetes... */
-  heroFront(look, left, t, o) {
-    const ctx = this.ctx;
-    const s = left ? -1 : 1;
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.globalAlpha = a0;
+    };
+    // piscando: pontos fixos em volta que acendem e apagam
+    const twinkle = (n, r, speed, draw) => {
+      if (!front) return;
+      for (let i = 0; i < n; i++) {
+        const ang = i * 2.39996, rr = r * (0.75 + 0.25 * Math.sin(i * 7.1));
+        const v = Math.sin(t * speed + i * 1.7);
+        if (v <= 0) continue;
+        ctx.globalAlpha = a0 * v;
+        draw(Math.cos(ang) * rr, Math.sin(ang) * rr * 0.85, i, v);
+      }
+      ctx.globalAlpha = a0;
+    };
+    const dot = (x, y, r, c) => this.circle(x, y, r, c);
     switch (look) {
-      case 'potato': { // brotinho na cabeça
-        ctx.strokeStyle = '#3E7A22'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(0, -26); ctx.quadraticCurveTo(2, -34, 0, -40); ctx.stroke();
-        const sw = Math.sin(t * 3) * 0.15;
-        for (const d of [-1, 1]) {
-          ctx.save(); ctx.translate(0, -38); ctx.rotate(d * (0.6 + sw));
-          ctx.fillStyle = d < 0 ? '#5DB33A' : '#7CD24E';
-          ctx.beginPath(); ctx.ellipse(d * 7, 0, 8, 4, 0, 0, Math.PI * 2); ctx.fill();
+      case 'potato': // folhinhas de broto subindo
+        rise(4, 26, 70, 0.35, (x, y, i) => {
+          ctx.save(); ctx.translate(x, y); ctx.rotate(Math.sin(t * 3 + i) * 0.6);
+          ctx.fillStyle = i % 2 ? '#7CD24E' : '#5DB33A';
+          ctx.beginPath(); ctx.ellipse(0, 0, 4.5, 2.2, 0.5, 0, Math.PI * 2); ctx.fill();
           ctx.restore();
-        }
+        });
         break;
-      }
-      case 'viking': { // capacete com chifres
-        for (const d of [-1, 1]) {
-          ctx.fillStyle = '#F2E8D0'; ctx.strokeStyle = '#6B5A3A'; ctx.lineWidth = 2;
+      case 'viking': // faíscas de força (Tomatão)
+        twinkle(7, 42, 4, (x, y, i, v) => this.sparkle(x, y, 3 + v * 3, i % 2 ? '#FF7043' : '#FFD54F'));
+        break;
+      case 'ninja': // estrelinhas ninja girando
+        orbit(3, 44, 16, 3.2, (x, y, i, a) => {
+          ctx.save(); ctx.translate(x, y + 6); ctx.rotate(a * 3);
+          ctx.fillStyle = '#B0BEC5';
           ctx.beginPath();
-          ctx.moveTo(d * 14, -24); ctx.quadraticCurveTo(d * 34, -30, d * 36, -50);
-          ctx.quadraticCurveTo(d * 26, -36, d * 10, -32); ctx.closePath(); ctx.fill(); ctx.stroke();
-        }
-        const g = ctx.createLinearGradient(0, -44, 0, -18);
-        g.addColorStop(0, '#D7DEE6'); g.addColorStop(1, '#7E8994');
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(0, -20, 20, Math.PI, 0); ctx.closePath(); ctx.fill();
-        ctx.strokeStyle = '#3B4048'; ctx.lineWidth = 2; ctx.stroke();
-        ctx.fillStyle = '#B8862B'; ctx.fillRect(-21, -22, 42, 5);
-        ctx.fillStyle = '#E8C060'; for (let i = -16; i <= 16; i += 8) { ctx.beginPath(); ctx.arc(i, -19.5, 1.5, 0, Math.PI * 2); ctx.fill(); }
+          for (let k = 0; k < 8; k++) { const rr = k % 2 ? 1.6 : 5; const aa = k * Math.PI / 4; ctx.lineTo(Math.cos(aa) * rr, Math.sin(aa) * rr); }
+          ctx.closePath(); ctx.fill();
+          ctx.restore();
+        });
         break;
-      }
-      case 'ninja': { // faixa preta com pontas balançando
-        ctx.fillStyle = '#1C1C22';
-        ctx.fillRect(-26, -17, 52, 8);
-        ctx.fillStyle = '#C9D1DB'; ctx.fillRect(-6, -16, 12, 6); // placa da faixa
-        ctx.fillStyle = '#5A6270'; ctx.beginPath(); ctx.arc(0, -13, 1.8, 0, Math.PI * 2); ctx.fill();
-        const wv = Math.sin(t * 9) * 4 + (o.moving ? 4 : 0);
-        ctx.strokeStyle = '#1C1C22'; ctx.lineWidth = 5;
-        for (const d of [0, 1]) {
-          ctx.beginPath(); ctx.moveTo(-s * 24, -13);
-          ctx.quadraticCurveTo(-s * 38, -10 + d * 8 + wv, -s * (50 + d * 4), -4 + d * 10 - wv);
-          ctx.stroke();
-        }
+      case 'cowboy': // pipocas pulando
+        rise(4, 28, 60, 0.6, (x, y, i) => {
+          dot(x, y, 3.6, '#FFF8E1'); dot(x + 2.4, y - 1.6, 2.6, '#FFF8E1'); dot(x - 1, y + 1.5, 1.6, '#FFCA28');
+        });
         break;
-      }
-      case 'cowboy': { // chapéu de caubói
-        ctx.fillStyle = '#8B5A2B'; ctx.strokeStyle = '#4A2E14'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.ellipse(0, -27, 32, 7, -0.05 * s, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(-17, -28); ctx.quadraticCurveTo(-19, -50, -6, -48); ctx.quadraticCurveTo(0, -44, 6, -48);
-        ctx.quadraticCurveTo(19, -50, 17, -28); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillStyle = '#3A2410'; ctx.fillRect(-17, -33, 34, 5);
-        ctx.fillStyle = '#E8C060'; ctx.beginPath(); ctx.arc(10, -30.5, 2.4, 0, Math.PI * 2); ctx.fill();
+      case 'flame': // brasas subindo
+        rise(7, 24, 70, 0.8, (x, y, i, u) => dot(x, y, 2.6 - u * 1.4, i % 3 ? '#FF9100' : '#FFEA00'));
         break;
-      }
-      case 'flame': { // chamas dançando na cabeça
-        for (let i = 0; i < 3; i++) {
-          const fx = (i - 1) * 9, h = 18 + Math.sin(t * 12 + i * 2) * 5 + (i === 1 ? 8 : 0);
-          this.flame(fx, -26, 8, h);
-        }
+      case 'lucky': // brilhinhos dourados e trevos
+        twinkle(6, 40, 3, (x, y, i, v) => {
+          if (i % 3 === 0) { ctx.fillStyle = '#4FD34F'; for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + 0.78; dot(x + Math.cos(a) * 2.2, y + Math.sin(a) * 2.2, 2.2, '#4FD34F'); } }
+          else this.sparkle(x, y, 2.5 + v * 3, '#FFE66D');
+        });
         break;
-      }
-      case 'lucky': { // cartola com trevo
-        ctx.fillStyle = '#1D3B1D'; ctx.strokeStyle = '#0B160B'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.ellipse(0, -28, 24, 5, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        ctx.fillRect(-14, -54, 28, 26); ctx.strokeRect(-14, -54, 28, 26);
-        ctx.fillStyle = '#E8C060'; ctx.fillRect(-14, -36, 28, 5);
-        ctx.fillStyle = '#4FD34F';
-        for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2 + 0.78; ctx.beginPath(); ctx.arc(7 * s + Math.cos(a) * 3, -45 + Math.sin(a) * 3, 3, 0, Math.PI * 2); ctx.fill(); }
-        // brilhinho
-        const sp = (t * 1.5) % 2;
-        if (sp < 1) this.sparkle(-18 * s, -46, 5 * Math.sin(sp * Math.PI), '#FFF6A0');
+      case 'knight': // escudinhos prateados girando
+        orbit(3, 42, 14, 1.4, (x, y) => {
+          ctx.save(); ctx.translate(x, y + 8);
+          ctx.fillStyle = '#CFD8DC'; ctx.strokeStyle = '#607D8B'; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(-4, -4); ctx.lineTo(4, -4); ctx.lineTo(4, 1); ctx.quadraticCurveTo(0, 6, -4, 1); ctx.closePath();
+          ctx.fill(); ctx.stroke();
+          ctx.restore();
+        });
         break;
-      }
-      case 'knight': { // elmo com pluma
-        ctx.fillStyle = '#C0392B';
-        ctx.beginPath(); ctx.moveTo(0, -38);
-        ctx.quadraticCurveTo(-s * 20, -64 + Math.sin(t * 3) * 2, -s * 34, -40); ctx.quadraticCurveTo(-s * 16, -48, 0, -34); ctx.fill();
-        const g = ctx.createLinearGradient(-22, -40, 22, -18);
-        g.addColorStop(0, '#E6EBF0'); g.addColorStop(1, '#7E8994');
-        ctx.fillStyle = g; ctx.strokeStyle = '#2F343A'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-22, -16); ctx.quadraticCurveTo(-22, -42, 0, -42); ctx.quadraticCurveTo(22, -42, 22, -16); ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(0, -42); ctx.lineTo(0, -17); ctx.stroke();
-        ctx.fillStyle = '#E8C060'; ctx.fillRect(-22, -19, 44, 4);
+      case 'archer': // penas caindo devagar
+        rise(3, 30, 66, 0.25, (x, y, i) => {
+          ctx.save(); ctx.translate(x, y); ctx.rotate(0.6 + Math.sin(t * 2 + i) * 0.5);
+          ctx.fillStyle = i % 2 ? '#E53935' : '#66BB6A';
+          ctx.beginPath(); ctx.ellipse(0, 0, 6, 2, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 0.8; ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(6, 0); ctx.stroke();
+          ctx.restore();
+        });
         break;
-      }
-      case 'archer': { // chapéu de Robin Hood com pena
-        ctx.fillStyle = '#2E7D32'; ctx.strokeStyle = '#123A14'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.moveTo(-24, -22); ctx.quadraticCurveTo(-6, -50, s * 30, -42); ctx.quadraticCurveTo(10, -30, 24, -22); ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        ctx.strokeStyle = '#D32F2F'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(-s * 8, -30); ctx.quadraticCurveTo(-s * 22, -50, -s * 30, -58); ctx.stroke();
-        ctx.lineWidth = 1.5;
-        for (let i = 0; i < 5; i++) { const px = -s * (12 + i * 4), py = -36 - i * 4.5; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - s * 5, py + 1); ctx.stroke(); }
+      case 'wizard': // flocos de gelo mágicos
+        twinkle(6, 40, 2.5, (x, y, i, v) => this.sparkle(x, y, 3 + v * 2.5, i % 2 ? '#B3E5FC' : '#E1F5FE'));
         break;
-      }
-      case 'wizard': { // chapéu de mago com estrelas
-        ctx.fillStyle = '#4A2C8A'; ctx.strokeStyle = '#1E1040'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.ellipse(0, -26, 28, 6, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        const tip = Math.sin(t * 2) * 4;
-        ctx.beginPath(); ctx.moveTo(-17, -27); ctx.quadraticCurveTo(-4, -50, s * 14 + tip, -66); ctx.quadraticCurveTo(6, -46, 17, -27); ctx.closePath();
-        ctx.fill(); ctx.stroke();
-        this.star(-4, -40, 4, '#FFE14A'); this.star(6, -32, 3, '#FFFFFF'); this.star(s * 10 + tip * 0.6, -54, 2.5, '#FFE14A');
-        break;
-      }
-      case 'cyborg': { // antena
-        ctx.strokeStyle = '#5A6270'; ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(s * 12, -24); ctx.lineTo(s * 18, -44); ctx.stroke();
-        const on = Math.sin(t * 8) > 0;
-        this.circle(s * 18, -46, 4, on ? '#FF3A3A' : '#7A1A1A');
-        break;
-      }
-      case 'vampire': { // presas e cabelo
-        ctx.fillStyle = '#FFFFFF'; ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
-        for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(d * 7 - 3, 9); ctx.lineTo(d * 7 + 3, 9); ctx.lineTo(d * 7, 17); ctx.closePath(); ctx.fill(); ctx.stroke(); }
-        ctx.fillStyle = '#7A0010';
-        ctx.beginPath(); ctx.arc(9, 16, 1.6, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#1A0A14';
-        ctx.beginPath(); ctx.moveTo(-20, -22); ctx.quadraticCurveTo(0, -38, 20, -22); ctx.lineTo(0, -14); ctx.closePath(); ctx.fill();
-        break;
-      }
-      case 'alien': { // antenas com bolinhas brilhando
-        for (const d of [-1, 1]) {
-          const sw = Math.sin(t * 4 + d) * 4;
-          ctx.strokeStyle = '#2E8B57'; ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(d * 8, -26); ctx.quadraticCurveTo(d * 14, -46, d * 20 + sw, -54); ctx.stroke();
-          const g = ctx.createRadialGradient(d * 20 + sw, -56, 1, d * 20 + sw, -56, 9);
-          g.addColorStop(0, '#E6FFE6'); g.addColorStop(0.4, '#5CFF8A'); g.addColorStop(1, 'rgba(92,255,138,0)');
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(d * 20 + sw, -56, 9, 0, Math.PI * 2); ctx.fill();
+      case 'cyborg': // pixels vermelhos e faíscas elétricas
+        orbit(4, 40, 14, 2.4, (x, y, i) => {
+          ctx.fillStyle = i % 2 ? '#FF3D3D' : '#80DEEA';
+          ctx.fillRect(x - 2.5, y + 6 - 2.5, 5, 5);
+        });
+        if (front && Math.sin(t * 9) > 0.7) {
+          ctx.strokeStyle = '#80DEEA'; ctx.lineWidth = 1.5;
+          const a = Math.floor(t * 9) * 2.1, cx = Math.cos(a) * 30, cy = Math.sin(a) * 22;
+          ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 4, cy + 4); ctx.lineTo(cx, cy + 7); ctx.lineTo(cx + 5, cy + 11); ctx.stroke();
         }
         break;
-      }
-      case 'miner': { // capacete de mineiro com lanterna
-        const g = ctx.createLinearGradient(0, -46, 0, -20);
-        g.addColorStop(0, '#FFE066'); g.addColorStop(1, '#E0A800');
-        ctx.fillStyle = g; ctx.strokeStyle = '#7A5A00'; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, -22, 22, Math.PI, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
-        ctx.fillRect(-26, -24, 52, 5); ctx.strokeRect(-26, -24, 52, 5);
-        ctx.fillStyle = '#3A3A3A'; ctx.fillRect(s * 4 - 6, -40, 12, 10);
-        const lg = ctx.createRadialGradient(s * 4, -35, 1, s * 4, -35, 10);
-        lg.addColorStop(0, '#FFFFFF'); lg.addColorStop(1, 'rgba(255,255,180,0)');
-        ctx.fillStyle = lg; ctx.beginPath(); ctx.arc(s * 4, -35, 10, 0, Math.PI * 2); ctx.fill();
+      case 'vampire': // gotas de suco vermelho girando
+        orbit(4, 40, 15, 1.8, (x, y) => {
+          ctx.fillStyle = '#C62828';
+          ctx.beginPath(); ctx.moveTo(x, y + 2); ctx.quadraticCurveTo(x + 3.5, y + 7, x, y + 9); ctx.quadraticCurveTo(x - 3.5, y + 7, x, y + 2); ctx.fill();
+        });
         break;
-      }
-      case 'summoner': { // tiara com cristal e runas girando
-        ctx.strokeStyle = '#C9A93A'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.arc(0, -8, 24, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
-        const g = ctx.createRadialGradient(0, -33, 1, 0, -33, 9);
-        g.addColorStop(0, '#FFFFFF'); g.addColorStop(0.5, '#7C8CFF'); g.addColorStop(1, 'rgba(124,140,255,0)');
-        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, -33, 9, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#5A6BFF';
-        ctx.beginPath(); ctx.moveTo(0, -40); ctx.lineTo(4, -33); ctx.lineTo(0, -27); ctx.lineTo(-4, -33); ctx.closePath(); ctx.fill();
-        for (let i = 0; i < 3; i++) {
-          const a = t * 2 + i * Math.PI * 2 / 3;
-          this.text(['ᚱ', 'ᛟ', 'ᚦ'][i], Math.cos(a) * 34, -6 + Math.sin(a) * 10, 12, '#9FB0FF', 'center');
+      case 'alien': // bolinhas verdes brilhando em órbita
+        orbit(3, 44, 16, 2.6, (x, y) => {
+          const g = ctx.createRadialGradient(x, y + 6, 0.5, x, y + 6, 7);
+          g.addColorStop(0, '#E6FFE6'); g.addColorStop(0.45, '#5CFF8A'); g.addColorStop(1, 'rgba(92,255,138,0)');
+          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y + 6, 7, 0, Math.PI * 2); ctx.fill();
+        });
+        break;
+      case 'miner': // sementes pretas pulando
+        rise(4, 26, 50, 0.7, (x, y, i) => {
+          ctx.fillStyle = '#212121';
+          ctx.beginPath(); ctx.ellipse(x, y, 2, 3.2, Math.sin(i) * 0.6, 0, Math.PI * 2); ctx.fill();
+        });
+        break;
+      case 'summoner': // faíscas de magia azul em órbita
+        orbit(5, 42, 16, 2, (x, y, i) => {
+          dot(x, y + 4, 3.2, 'rgba(124,140,255,0.45)');
+          dot(x, y + 4, 1.8, i % 2 ? '#C5CAE9' : '#7C8CFF');
+        });
+        break;
+      case 'racer': // lascas de coco girando e poeira quando anda
+        orbit(3, 40, 14, 3, (x, y, i, a) => {
+          ctx.save(); ctx.translate(x, y + 8); ctx.rotate(a * 2);
+          ctx.fillStyle = i % 2 ? '#8D6E63' : '#F5F5F5'; ctx.fillRect(-3.5, -1.8, 7, 3.6);
+          ctx.restore();
+        });
+        if (!front) {
+          const n = o.moving ? 5 : 2;
+          for (let i = 0; i < n; i++) {
+            const u = (t * 1.6 + i / n) % 1;
+            ctx.globalAlpha = a0 * (1 - u) * 0.7;
+            dot(-6 + Math.sin(i * 5) * 16, 26 - u * 12, 3 + u * 6, '#BCAAA4');
+          }
+          ctx.globalAlpha = a0;
         }
         break;
-      }
-      case 'racer': { // óculos de corrida na testa
-        ctx.strokeStyle = '#3A2410'; ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.moveTo(-26, -18); ctx.lineTo(26, -18); ctx.stroke();
-        for (const d of [-1, 1]) {
-          ctx.fillStyle = '#5A5A5A'; ctx.beginPath(); ctx.arc(d * 10, -20, 8, 0, Math.PI * 2); ctx.fill();
-          const g = ctx.createLinearGradient(d * 10 - 6, -26, d * 10 + 6, -14);
-          g.addColorStop(0, '#9FE8FF'); g.addColorStop(1, '#2A7FB0');
-          ctx.fillStyle = g; ctx.beginPath(); ctx.arc(d * 10, -20, 5.5, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.beginPath(); ctx.arc(d * 10 - 2, -22, 1.6, 0, Math.PI * 2); ctx.fill();
-        }
-        break;
-      }
     }
   },
 
