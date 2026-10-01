@@ -3,7 +3,7 @@
 Jogo para **Android** no estilo *Brotato*: um roguelite de arena em que você é um
 legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a horta.
 
-![Menu](docs/01_menu.png)
+![Menu](docs/v2_01_menu.png)
 
 ## 📲 Como instalar no celular
 
@@ -56,33 +56,59 @@ Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
   - **Loja:** compre armas e itens, **tranque** 🔒 o que quiser guardar pra próxima, ou **role** a loja.
   - Toque numa arma sua para **vender** ou **combinar**: duas armas iguais do mesmo nível viram uma de nível maior (I → II → III → IV).
 
-| Escolha do personagem | Em jogo |
+| Escolha do personagem | Em jogo (elite 👑, caixa 📦, vida baixa) |
 |---|---|
-| ![Personagens](docs/03_chars.png) | ![Jogando](docs/04_playing.png) |
-| **Chefão: Lesma Rainha** | **Loja** |
-| ![Chefão](docs/05_boss.png) | ![Loja](docs/08_shop.png) |
+| ![Personagens](docs/v2_03_chars.png) | ![Jogando](docs/v2_04_playing.png) |
+| **Caixa no fim da onda** | **Loja** |
+| ![Caixa](docs/v2_06_crate.png) | ![Loja](docs/v2_07_shop.png) |
+
+### Novidades da versão 2.0 (APK)
+
+- **3 personagens novos para desbloquear:** 🎃 Abóbora Blindada (chegue na onda 10),
+  🥒 Pepino Arqueiro (derrote 2000 insetos no total) e 🍄 Cogumelo Místico (vença 1 partida).
+  Também dá pra escolher **🎲 Aleatório**.
+- **4 dificuldades:** Fácil, Normal, Difícil e Pesadelo (o jogo marca ✔ nas que você já venceu).
+- **3 armas novas:** 🔨 Martelo (arremessa longe), 🏹 Arco (atravessa 2 inimigos) e
+  ❄️ Varinha de Gelo (deixa os inimigos lentos).
+- **Inimigo novo:** 🦋 Mariposa, que voa em zigue-zague.
+- **Elites 👑:** versões douradas e bem mais fortes dos insetos (a partir da onda 5).
+  Sempre deixam uma **caixa 📦**.
+- **Caixas:** no fim da onda, cada caixa vira um item grátis (ou pode ser reciclada por sementes).
+- **6 itens com efeitos especiais:** 🌀 Redemoinho (pega sementes de mais longe),
+  🍌 Banana (frutas curam mais), 🌹 Rosa (espinhos), 🗺️ Mapa do Tesouro (mais caixas),
+  🎆 Fogos e 🌋 Vulcão (inimigos explodem ao morrer).
+- **Continuar depois:** a partida é salva na loja. Se fechar o app, aparece **Continuar** no menu.
+- **Música de fundo** gerada por código (e botão para desligar).
+- **Fim de onda animado:** os insetos somem e as sementes voam até você.
+- **Aviso de vida baixa:** as bordas da tela piscam em vermelho.
+- **Dano de cada arma:** aparece na pausa, na loja e no fim da partida.
+- **Toque num item** para ver o que ele faz.
+- Recordes: melhor onda, vitórias e total de insetos derrotados.
+
+![Fim de jogo](docs/v2_11_gameover.png)
 
 ### Personagens
 
-| | Nome | Arma inicial | Estilo |
-|---|---|---|---|
-| 🥔 | Batata Básica | Soco | Equilibrada |
-| 🍅 | Tomatão | Espada | Muita vida e dano corpo a corpo, mas lento |
-| 🥕 | Cenoura Ninja | Faca | Rápida, esquiva e crítico |
-| 🌽 | Milho Atirador | Pistola | Dano à distância e alcance |
-| 🌶️ | Pimenta Ardida | Cajado de Fogo | Dano elemental (queimadura) |
-| 🍆 | Berinjela Sortuda | Estilingue | Sorte e colheita, menos dano |
+| | Nome | Arma inicial | Estilo | Como liberar |
+|---|---|---|---|---|
+| 🥔 | Batata Básica | Soco | Equilibrada | — |
+| 🍅 | Tomatão | Espada | Muita vida e dano corpo a corpo, mas lento | — |
+| 🥕 | Cenoura Ninja | Faca | Rápida, esquiva e crítico | — |
+| 🌽 | Milho Atirador | Pistola | Dano à distância e alcance | — |
+| 🌶️ | Pimenta Ardida | Cajado de Fogo | Dano elemental (queimadura) | — |
+| 🍆 | Berinjela Sortuda | Estilingue | Sorte e colheita, menos dano | — |
+| 🎃 | Abóbora Blindada | Martelo | Armadura e vida, bem lenta | Chegar na onda 10 |
+| 🥒 | Pepino Arqueiro | Arco | Crítico e alcance, pouca vida | Derrotar 2000 insetos |
+| 🍄 | Cogumelo Místico | Varinha de Gelo | Elemental, regeneração e sorte | Vencer 1 partida |
 
 ### Conteúdo
 
-- **11 armas:** Soco, Faca, Espada, Lança, Estilingue (ricochete), Pistola (atravessa),
-  Metralha-Semente, Escopeta, Cajado de Fogo (queima), Bazuca (explosão) e Bastão Elétrico (raio que pula entre alvos).
-- **32 itens** com vantagens e desvantagens (ex.: *Café* ☕ = +8% vel. ataque, −1 vida).
-- **15 atributos:** vida, regeneração, roubo de vida, dano, corpo a corpo, à distância, elemental,
-  velocidade de ataque, crítico, alcance, armadura, esquiva, velocidade, sorte e colheita.
-- **5 inimigos** (lagarta, vespa, aranha que cospe, joaninha blindada, escorpião que dá investida)
-  e **2 chefões** (Lesma Rainha e Formiga Imperatriz).
-- Sons gerados por código, vibração, recordes salvos no celular.
+- **14 armas**, **38 itens** (6 com efeito especial), **15 atributos**.
+- **6 inimigos** (lagarta, vespa, aranha que cospe, joaninha blindada, escorpião que dá investida,
+  mariposa), versões **elite** e **2 chefões** (Lesma Rainha e Formiga Imperatriz).
+- Sons e música gerados por código, vibração, recordes e partida salvos no celular.
+
+> A versão para PC/celular no navegador (pasta `pwa/`) ainda é a 1.0: ela não tem as novidades acima.
 
 ## 🛠️ Como o projeto funciona (para a apresentação)
 

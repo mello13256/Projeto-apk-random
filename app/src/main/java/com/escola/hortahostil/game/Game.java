@@ -18,7 +18,14 @@ public final class Game {
     public static final int BUY_FULL = 2;
     public static final int BUY_EMPTY = 3;
 
-    public enum State { MENU, CHAR_SELECT, PLAYING, LEVEL_UP, SHOP, GAME_OVER, VICTORY }
+    public enum State { MENU, CHAR_SELECT, PLAYING, LEVEL_UP, CRATE, SHOP, GAME_OVER, VICTORY }
+
+    // Dificuldades (multiplicadores de vida e dano dos inimigos, e intervalo de nascimento)
+    public static final String[] DIFF_NAMES = {"Fácil", "Normal", "Difícil", "Pesadelo"};
+    public static final String[] DIFF_ICONS = {"🌱", "🌿", "🔥", "💀"};
+    static final float[] DIFF_HP = {0.6f, 1.15f, 1.4f, 1.7f};
+    static final float[] DIFF_DMG = {0.6f, 1.15f, 1.45f, 1.8f};
+    static final float[] DIFF_SPAWN = {1.15f, 1f, 0.9f, 0.8f};
 
     public State state = State.MENU;
     public boolean paused;
@@ -34,6 +41,14 @@ public final class Game {
     public int levelsPending;
     public int lastHarvest;
     public Enemy boss;
+    public int difficulty = 1;
+    /** Animação do fim da onda (sementes voando até o jogador). */
+    public boolean ending;
+    public float endTimer;
+    /** Item oferecido pela caixa sendo aberta. */
+    public ItemDef crateItem;
+    private int cratesDroppedThisWave;
+    private int elitesThisWave;
 
     public final ArrayList<Enemy> enemies = new ArrayList<>();
     public final ArrayList<Telegraph> telegraphs = new ArrayList<>();
@@ -68,6 +83,11 @@ public final class Game {
     // ------------------------------------------------------------------
 
     public void newRun(CharDef c) {
+        newRun(c, difficulty);
+    }
+
+    public void newRun(CharDef c, int diff) {
+        difficulty = Math.max(0, Math.min(DIFF_NAMES.length - 1, diff));
         player = new Player(c);
         player.materials = START_MATERIALS;
         kills = 0;
@@ -90,7 +110,11 @@ public final class Game {
         particles.clear();
         texts.clear();
         boss = null;
+        ending = false;
+        cratesDroppedThisWave = 0;
+        elitesThisWave = 0;
         Player p = player;
+        p.crates = 0;
         p.x = WORLD_W / 2f;
         p.y = WORLD_H / 2f;
         p.hp = p.maxHp();
@@ -99,6 +123,7 @@ public final class Game {
         for (Weapon w : p.weapons) {
             w.cd = rng.nextFloat() * 0.5f;
             w.attackT = -1f;
+            w.waveDamage = 0;
         }
         spawnTimer = 0.6f;
         if (n == 10) {
@@ -136,7 +161,7 @@ public final class Game {
         enemyBullets.clear();
         pickups.clear();
         boss = null;
-        fx.sound(Fx.WAVE_END);
+        ending = false;
         if (wave >= MAX_WAVE) {
             state = State.VICTORY;
             fx.runEnded(true, wave);
@@ -147,8 +172,70 @@ public final class Game {
             levelRerolls = 0;
             rollLevelChoices();
         } else {
-            openShop();
+            afterLevelUps();
         }
+    }
+
+    /** Depois das melhorias: abre as caixas (se houver) e depois a loja. */
+    private void afterLevelUps() {
+        if (player.crates > 0) openCrate();
+        else openShop();
+    }
+
+    /** Começa a animação de fim de onda: insetos somem e as sementes voam pro jogador. */
+    private void beginEnding() {
+        ending = true;
+        endTimer = 1.3f;
+        for (Enemy e : enemies) {
+            if (e.dead) continue;
+            e.dead = true;
+            burst(e.x, e.y, 6, 0xFF8B6B4A, 140f, 5f, 0.4f);
+        }
+        telegraphs.clear();
+        bullets.clear();
+        enemyBullets.clear();
+        boss = null;
+        for (Pickup pk : pickups) pk.attracted = true;
+        showBanner("ONDA CONCLUÍDA!");
+        fx.sound(Fx.WAVE_END);
+    }
+
+    // ------------------------------------------------------------------
+    // Caixas
+    // ------------------------------------------------------------------
+
+    private void openCrate() {
+        state = State.CRATE;
+        int tier = Shop.rollTier(rng, wave + 3, player.stats[Stat.LUCK]);
+        int count = 0;
+        for (ItemDef it : ItemDef.ALL) if (it.tier == tier) count++;
+        int pick = rng.nextInt(count);
+        for (ItemDef it : ItemDef.ALL) {
+            if (it.tier == tier && pick-- == 0) {
+                crateItem = it;
+                break;
+            }
+        }
+    }
+
+    public int crateRecyclePrice() {
+        return crateItem == null ? 0 : Math.max(1, Math.round(Shop.itemPrice(crateItem, wave + 1) * 0.35f));
+    }
+
+    /** Pega (true) ou recicla (false) o item da caixa. */
+    public void resolveCrate(boolean take) {
+        if (state != State.CRATE || crateItem == null) return;
+        if (take) {
+            player.addItem(crateItem);
+            fx.sound(Fx.LEVEL_UP);
+        } else {
+            player.materials += crateRecyclePrice();
+            fx.sound(Fx.BUY);
+        }
+        crateItem = null;
+        player.crates--;
+        if (player.crates > 0) openCrate();
+        else openShop();
     }
 
     void gameOver() {
@@ -222,7 +309,7 @@ public final class Game {
             levelRerolls = 0;
             rollLevelChoices();
         } else {
-            openShop();
+            afterLevelUps();
         }
     }
 
@@ -302,9 +389,7 @@ public final class Game {
                 p.weapons.get(findMergeTarget(o.weapon, o.tier, -1)).tier++;
             }
         } else {
-            p.items.add(o.item);
-            o.item.applyTo(p.stats);
-            p.hp = Math.min(p.maxHp(), Math.max(p.hp, 1));
+            p.addItem(o.item);
         }
         p.materials -= o.price;
         offers[i] = null;
@@ -362,8 +447,17 @@ public final class Game {
     public void update(float dt, float jx, float jy) {
         if (bannerTime > 0f) bannerTime -= dt;
         if (state != State.PLAYING || paused) return;
-        waveTime += dt;
         shake = Math.max(0f, shake - dt * 25f);
+        if (ending) {
+            updatePlayer(dt, jx, jy);
+            updatePickups(dt);
+            updateEffects(dt);
+            cleanup();
+            endTimer -= dt;
+            if (endTimer <= 0f) endWave();
+            return;
+        }
+        waveTime += dt;
         updatePlayer(dt, jx, jy);
         updateSpawns(dt);
         updateEnemies(dt);
@@ -378,7 +472,7 @@ public final class Game {
             gameOver();
             return;
         }
-        if (waveTime >= waveDuration) endWave();
+        if (waveTime >= waveDuration) beginEnding();
     }
 
     private void updatePlayer(float dt, float jx, float jy) {
@@ -421,7 +515,7 @@ public final class Game {
     }
 
     private float spawnInterval() {
-        return Math.max(0.3f, 1.6f - wave * 0.065f);
+        return Math.max(0.3f, 1.6f - wave * 0.065f) * DIFF_SPAWN[difficulty];
     }
 
     private int enemyCap() {
@@ -462,6 +556,7 @@ public final class Game {
             else if (d == EnemyDef.LAGARTA) w = 10;
             else if (d == EnemyDef.VESPA) w = 4 + wave / 3;
             else if (d == EnemyDef.ARANHA) w = 3 + wave / 4;
+            else if (d == EnemyDef.MARIPOSA) w = 3 + wave / 4;
             else w = 2 + wave / 5;
             weights[i] = w;
             total += w;
@@ -476,8 +571,23 @@ public final class Game {
 
     private Enemy spawnEnemy(EnemyDef d, float x, float y) {
         float mult = d.boss ? 1f : hpMult(wave);
+        mult *= DIFF_HP[difficulty];
         Enemy e = new Enemy(d, x, y, mult, wave, 0.9f + rng.nextFloat() * 0.2f);
+        e.damage = Math.max(1, Math.round(e.damage * DIFF_DMG[difficulty]));
+        // Poucos elites por onda: 1 a partir da onda 5, 2 a partir da 10, 3 a partir da 15.
+        int maxElites = wave < 5 ? 0 : 1 + (wave - 5) / 5 + (difficulty >= 3 ? 1 : 0);
+        float eliteChance = 0.012f + 0.004f * difficulty;
+        if (!d.boss && elitesThisWave < maxElites && d != EnemyDef.VESPA && rng.nextFloat() < eliteChance) {
+            elitesThisWave++;
+            e.elite = true;
+            e.maxHp *= 4f;
+            e.hp = e.maxHp;
+            e.radius *= 1.35f;
+            e.damage = Math.round(e.damage * 1.5f);
+            e.speed *= 0.9f;
+        }
         e.aiTimer = 1f + rng.nextFloat() * 1.5f;
+        if (!d.boss) e.spiral = rng.nextFloat() * 6.28f;
         e.aiTimer2 = d.boss ? 6f : 0f;
         enemies.add(e);
         burst(x, y, d.boss ? 30 : 6, 0xFF8B6B4A, 120f, 5f, 0.4f);
@@ -523,7 +633,7 @@ public final class Game {
                 if (e.burnTick <= 0f) {
                     e.burnTick = 0.5f;
                     burst(e.x, e.y - e.radius * 0.5f, 3, 0xFFFF8A1A, 60f, 4f, 0.4f);
-                    damageEnemy(e, e.burnDamage, false, 0f, 0f, 0f, 0, 0xFFFFA040);
+                    damageEnemy(e, e.burnDamage, false, 0f, 0f, 0f, 0, 0xFFFFA040, e.burnSource);
                     if (e.dead) continue;
                 }
                 if (e.burnTime <= 0f) e.burnDamage = 0;
@@ -606,10 +716,23 @@ public final class Game {
                         sp = 650f;
                     }
                     break;
+                case EnemyDef.AI_ZIGZAG: {
+                    float wob = (float) Math.sin(e.anim * 5f + e.spiral) * 1.1f;
+                    mx = nx - ny * wob;
+                    my = ny + nx * wob;
+                    float len = (float) Math.sqrt(mx * mx + my * my) + 0.0001f;
+                    mx /= len;
+                    my /= len;
+                    break;
+                }
                 default:
                     break;
             }
 
+            if (e.slowTime > 0f) {
+                e.slowTime -= dt;
+                sp *= 0.5f;
+            }
             e.x += mx * sp * dt;
             e.y += my * sp * dt;
             if (Math.abs(mx) > 0.05f) e.facingLeft = mx < 0f;
@@ -618,7 +741,7 @@ public final class Game {
 
             // contato com o jogador
             float hit = e.radius + p.radius - 8f;
-            if (d < hit) damagePlayer(e.damage);
+            if (d < hit) damagePlayer(e.damage, e);
         }
     }
 
@@ -739,8 +862,16 @@ public final class Game {
     }
 
     public void damagePlayer(int dmg) {
+        damagePlayer(dmg, null);
+    }
+
+    public void damagePlayer(int dmg, Enemy source) {
         Player p = player;
-        if (p.iframes > 0f || state != State.PLAYING) return;
+        if (p.iframes > 0f || state != State.PLAYING || ending) return;
+        int thorns = p.specials[ItemDef.SP_THORNS];
+        if (source != null && thorns > 0 && !source.dead) {
+            damageEnemy(source, thorns, false, 0f, 0f, 0f, 0, 0xFFFF7AB0, null);
+        }
         if (rng.nextInt(100) < p.dodgeChance()) {
             addText(p.x, p.y - 40, "Esquivou!", 0xFFBFE8FF, 24);
             p.iframes = 0.25f;
@@ -826,7 +957,7 @@ public final class Game {
             if (dx * dx + dy * dy < r * r) {
                 w.hitList.add(e);
                 int dmg = rollDamage(w);
-                damageEnemy(e, dmg, lastCrit, w.dirX, w.dirY, w.def.knockback, 0, 0);
+                damageEnemy(e, dmg, lastCrit, w.dirX, w.dirY, w.def.knockback, 0, 0, w);
             }
         }
     }
@@ -853,11 +984,12 @@ public final class Game {
             b.pierce = def.pierce;
             b.bounce = def.bounce;
             b.explosion = def.explosion;
+            b.slow = def.slow;
             b.burn = burn;
             b.knockback = def.knockback;
             b.color = def.color;
             b.lightning = def == WeaponDef.RAIO;
-            b.radius = def.explosion > 0 ? 10f : def.burn > 0 ? 10f : 7f;
+            b.radius = def.explosion > 0 || def.burn > 0 || def.slow > 0 ? 10f : 7f;
             b.source = w;
             bullets.add(b);
         }
@@ -898,7 +1030,8 @@ public final class Game {
                     break;
                 }
                 float sp = (float) Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-                damageEnemy(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, 0);
+                if (b.slow > 0f) e.slowTime = Math.max(e.slowTime, b.slow);
+                damageEnemy(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, 0, b.source);
                 b.hit.add(e);
                 if (b.lightning) burst(e.x, e.y, 5, 0xFFFFF27A, 160f, 3f, 0.25f);
                 if (b.bounce > 0) {
@@ -924,28 +1057,37 @@ public final class Game {
     }
 
     private void explode(Bullet b) {
-        float r = b.explosion;
+        explodeAt(b.x, b.y, b.explosion, b.damage, b.crit, b.knockback, b.burn, b.source);
+    }
+
+    private int explosionDepth;
+
+    private void explodeAt(float x, float y, float r, int damage, boolean crit, float kb, int burn,
+                           Weapon src) {
+        if (explosionDepth > 6) return; // evita reação em cadeia infinita
+        explosionDepth++;
         for (int i = 0, n = enemies.size(); i < n; i++) {
             Enemy e = enemies.get(i);
             if (e.dead) continue;
-            float dx = e.x - b.x, dy = e.y - b.y;
+            float dx = e.x - x, dy = e.y - y;
             float rr = r + e.radius;
             float d2 = dx * dx + dy * dy;
             if (d2 < rr * rr) {
                 float d = (float) Math.sqrt(d2) + 0.001f;
-                damageEnemy(e, b.damage, b.crit, dx / d, dy / d, b.knockback, b.burn, 0);
+                damageEnemy(e, damage, crit, dx / d, dy / d, kb, burn, 0, src);
             }
         }
+        explosionDepth--;
         Particle ring = newParticle();
         if (ring != null) {
-            ring.x = b.x;
-            ring.y = b.y;
+            ring.x = x;
+            ring.y = y;
             ring.ring = true;
             ring.size = r;
             ring.life = ring.maxLife = 0.3f;
             ring.color = 0xFFFFB040;
         }
-        burst(b.x, b.y, 14, 0xFFFF9A2A, 260f, 7f, 0.45f);
+        burst(x, y, 14, 0xFFFF9A2A, 260f, 7f, 0.45f);
         shake = Math.max(shake, 4f);
         fx.sound(Fx.EXPLODE);
     }
@@ -971,12 +1113,17 @@ public final class Game {
     }
 
     public void damageEnemy(Enemy e, int dmg, boolean crit, float kx, float ky, float kb,
-                            int burn, int textColor) {
+                            int burn, int textColor, Weapon src) {
         if (e.dead) return;
+        if (src != null) {
+            int real = (int) Math.min(dmg, Math.max(0f, e.hp));
+            src.waveDamage += real;
+            src.totalDamage += real;
+        }
         e.hp -= dmg;
         e.flash = 0.08f;
         if (!e.def.boss && kb > 0f) {
-            float resist = e.def == EnemyDef.JOANINHA ? 0.4f : 1f;
+            float resist = e.def == EnemyDef.JOANINHA || e.elite ? 0.4f : 1f;
             e.vx += kx * kb * 12f * resist;
             e.vy += ky * kb * 12f * resist;
         }
@@ -986,6 +1133,7 @@ public final class Game {
         if (burn > 0) {
             e.burnTime = 2.1f;
             if (e.burnDamage < burn) e.burnDamage = burn;
+            e.burnSource = src;
             if (e.burnTick <= 0f) e.burnTick = 0.5f;
         }
         Player p = player;
@@ -1000,19 +1148,38 @@ public final class Game {
     private void killEnemy(Enemy e) {
         e.dead = true;
         kills++;
-        for (int i = 0; i < e.def.drops; i++) {
+        int drops = e.elite ? e.def.drops * 4 : e.def.drops;
+        for (int i = 0; i < drops; i++) {
             float a = rng.nextFloat() * 6.2832f;
-            float s = e.def.drops > 1 ? 60f + rng.nextFloat() * 180f : 20f;
+            float s = drops > 1 ? 60f + rng.nextFloat() * 180f : 20f;
             dropMaterial(e.x, e.y, (float) Math.cos(a) * s, (float) Math.sin(a) * s);
         }
-        float fruitChance = 0.025f * Math.max(0.2f, 1f + player.stats[Stat.LUCK] / 100f);
-        if (!e.def.boss && rng.nextFloat() < fruitChance) {
-            Pickup f = new Pickup(Pickup.FRUIT, e.x, e.y, 3);
+        Player p = player;
+        float luck = Math.max(0.2f, 1f + p.stats[Stat.LUCK] / 100f);
+        if (!e.def.boss && rng.nextFloat() < 0.025f * luck) {
+            Pickup f = new Pickup(Pickup.FRUIT, e.x, e.y, 3 + p.specials[ItemDef.SP_FRUIT]);
             pickups.add(f);
+        }
+        float crateChance = 0.004f * luck * (1f + p.specials[ItemDef.SP_CRATE] / 100f);
+        if (e.elite || e.def.boss || (cratesDroppedThisWave < 2 && rng.nextFloat() < crateChance)) {
+            cratesDroppedThisWave++;
+            Pickup c = new Pickup(Pickup.CRATE, e.x, e.y, 1);
+            c.vx = (rng.nextFloat() - 0.5f) * 200f;
+            c.vy = (rng.nextFloat() - 0.5f) * 200f;
+            pickups.add(c);
+        }
+        int boom = p.specials[ItemDef.SP_BOOM];
+        if (boom > 0 && !e.def.boss && rng.nextInt(100) < boom) {
+            int dmg = Math.max(1, Math.round((4 + wave * 1.5f) * p.damageMult()));
+            explodeAt(e.x, e.y, 70f, dmg, false, 15f, 0, null);
         }
         burst(e.x, e.y, e.def.boss ? 60 : 10, 0xFF9BD33A, e.def.boss ? 400f : 180f,
                 e.def.boss ? 10f : 6f, 0.5f);
         fx.sound(Fx.KILL);
+        if (e.elite) {
+            shake = Math.max(shake, 6f);
+            addText(e.x, e.y - 30, "ELITE!", 0xFFFFD84A, 30);
+        }
         if (e.def.boss) {
             if (boss == e) boss = null;
             shake = 16f;
@@ -1052,7 +1219,7 @@ public final class Game {
             float d = (float) Math.sqrt(dx * dx + dy * dy);
             if (!pk.attracted && d < range) pk.attracted = true;
             if (pk.attracted && d > 0.01f) {
-                float sp = 700f;
+                float sp = ending ? 1300f : 700f;
                 pk.vx = dx / d * sp;
                 pk.vy = dy / d * sp;
             } else {
@@ -1068,6 +1235,10 @@ public final class Game {
                     p.materials += pk.value;
                     addXp(pk.value);
                     fx.sound(Fx.PICKUP);
+                } else if (pk.type == Pickup.CRATE) {
+                    p.crates++;
+                    addText(p.x, p.y - 40, "+1 CAIXA!", 0xFFFFD84A, 30);
+                    fx.sound(Fx.LEVEL_UP);
                 } else {
                     p.heal(pk.value);
                     addText(p.x, p.y - 40, "+" + pk.value, 0xFF6BFF7A, 28);
@@ -1171,6 +1342,143 @@ public final class Game {
 
     private static <T> void trim(ArrayList<T> list, int size) {
         for (int i = list.size() - 1; i >= size; i--) list.remove(i);
+    }
+
+    // ------------------------------------------------------------------
+    // Salvar e continuar (a partida é salva na loja, entre as ondas)
+    // ------------------------------------------------------------------
+
+    /** Texto com a partida atual, ou null se não dá pra salvar agora. */
+    public String saveToString() {
+        if (state != State.SHOP || player == null) return null;
+        Player p = player;
+        StringBuilder sb = new StringBuilder();
+        line(sb, "v", "2");
+        line(sb, "char", indexOf(CharDef.ALL, p.character));
+        line(sb, "diff", difficulty);
+        line(sb, "wave", wave);
+        line(sb, "kills", kills);
+        line(sb, "level", p.level);
+        line(sb, "xp", p.xp);
+        line(sb, "materials", p.materials);
+        line(sb, "harvest", lastHarvest);
+        line(sb, "rerolls", shopRerolls);
+        StringBuilder st = new StringBuilder();
+        for (int i = 0; i < Stat.COUNT; i++) st.append(i > 0 ? "," : "").append(p.stats[i]);
+        line(sb, "stats", st);
+        StringBuilder ws = new StringBuilder();
+        for (Weapon w : p.weapons) {
+            if (ws.length() > 0) ws.append(';');
+            ws.append(indexOf(WeaponDef.ALL, w.def)).append(',').append(w.tier).append(',')
+                    .append(w.totalDamage).append(',').append(w.waveDamage);
+        }
+        line(sb, "weapons", ws);
+        StringBuilder is = new StringBuilder();
+        for (ItemDef it : p.items) is.append(is.length() > 0 ? "," : "").append(indexOf(ItemDef.ALL, it));
+        line(sb, "items", is);
+        StringBuilder os = new StringBuilder();
+        for (int i = 0; i < offers.length; i++) {
+            if (i > 0) os.append(';');
+            Shop.Offer o = offers[i];
+            if (o == null) os.append('-');
+            else if (o.weapon != null) os.append("W,").append(indexOf(WeaponDef.ALL, o.weapon)).append(',')
+                    .append(o.tier).append(',').append(o.price).append(',').append(o.locked ? 1 : 0);
+            else os.append("I,").append(indexOf(ItemDef.ALL, o.item)).append(',')
+                    .append(o.price).append(',').append(o.locked ? 1 : 0);
+        }
+        line(sb, "offers", os);
+        return sb.toString();
+    }
+
+    /** Restaura uma partida salva (fica na loja). Retorna false se o texto for inválido. */
+    public boolean loadFromString(String data) {
+        if (data == null || data.isEmpty()) return false;
+        try {
+            java.util.HashMap<String, String> m = new java.util.HashMap<>();
+            for (String l : data.split("\n")) {
+                int eq = l.indexOf('=');
+                if (eq > 0) m.put(l.substring(0, eq), l.substring(eq + 1));
+            }
+            if (!"2".equals(m.get("v"))) return false;
+            Player p = new Player(CharDef.ALL[num(m, "char")]);
+            p.weapons.clear();
+            difficulty = num(m, "diff");
+            wave = num(m, "wave");
+            kills = num(m, "kills");
+            p.level = num(m, "level");
+            p.xp = num(m, "xp");
+            p.materials = num(m, "materials");
+            lastHarvest = num(m, "harvest");
+            shopRerolls = num(m, "rerolls");
+            String[] st = m.get("stats").split(",");
+            for (int i = 0; i < Stat.COUNT; i++) p.stats[i] = Integer.parseInt(st[i]);
+            for (String w : m.get("weapons").split(";")) {
+                if (w.isEmpty()) continue;
+                String[] f = w.split(",");
+                Weapon wp = new Weapon(WeaponDef.ALL[Integer.parseInt(f[0])], Integer.parseInt(f[1]));
+                wp.totalDamage = Integer.parseInt(f[2]);
+                wp.waveDamage = Integer.parseInt(f[3]);
+                p.weapons.add(wp);
+            }
+            String items = m.get("items");
+            if (items != null && !items.isEmpty()) {
+                for (String it : items.split(",")) {
+                    ItemDef def = ItemDef.ALL[Integer.parseInt(it)];
+                    p.items.add(def); // os atributos já estão em "stats"
+                    if (def.special != ItemDef.SP_NONE) p.specials[def.special] += def.specialValue;
+                }
+            }
+            String[] os = m.get("offers").split(";");
+            for (int i = 0; i < offers.length; i++) {
+                offers[i] = null;
+                if (i >= os.length || os[i].equals("-")) continue;
+                String[] f = os[i].split(",");
+                Shop.Offer o = new Shop.Offer();
+                if (f[0].equals("W")) {
+                    o.weapon = WeaponDef.ALL[Integer.parseInt(f[1])];
+                    o.tier = Integer.parseInt(f[2]);
+                    o.price = Integer.parseInt(f[3]);
+                    o.locked = f[4].equals("1");
+                } else {
+                    o.item = ItemDef.ALL[Integer.parseInt(f[1])];
+                    o.tier = o.item.tier;
+                    o.price = Integer.parseInt(f[2]);
+                    o.locked = f[3].equals("1");
+                }
+                offers[i] = o;
+            }
+            if (p.weapons.isEmpty()) return false;
+            p.hp = p.maxHp();
+            player = p;
+            levelsPending = 0;
+            paused = false;
+            ending = false;
+            enemies.clear();
+            telegraphs.clear();
+            bullets.clear();
+            enemyBullets.clear();
+            pickups.clear();
+            particles.clear();
+            texts.clear();
+            boss = null;
+            state = State.SHOP;
+            return true;
+        } catch (RuntimeException ex) {
+            return false;
+        }
+    }
+
+    private static void line(StringBuilder sb, String k, Object v) {
+        sb.append(k).append('=').append(v).append('\n');
+    }
+
+    private static int num(java.util.Map<String, String> m, String k) {
+        return Integer.parseInt(m.get(k));
+    }
+
+    private static int indexOf(Object[] arr, Object o) {
+        for (int i = 0; i < arr.length; i++) if (arr[i] == o) return i;
+        return -1;
     }
 
     // --- Utilidades ---

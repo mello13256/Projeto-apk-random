@@ -12,6 +12,8 @@ public final class WeaponDef {
     public static final int SHAPE_GUN = 2;
     public static final int SHAPE_STAFF = 3;
     public static final int SHAPE_TUBE = 4;
+    public static final int SHAPE_BOW = 5;
+    public static final int SHAPE_HAMMER = 6;
 
     public static final float[] TIER_DMG = {1f, 1.7f, 2.6f, 3.8f};
     public static final float[] TIER_SCALE = {1f, 1.2f, 1.45f, 1.8f};
@@ -37,6 +39,8 @@ public final class WeaponDef {
     public float projSpeed = 700f;
     public float explosion = 0f;
     public int burn = 0;
+    /** Segundos que o inimigo fica lento (gelo). */
+    public float slow = 0f;
     public float hitRadius = 22f;
     public int shape;
     public int color;
@@ -72,7 +76,7 @@ public final class WeaponDef {
 
     public static final WeaponDef[] ALL;
     public static final WeaponDef SOCO, FACA, ESPADA, LANCA, ESTILINGUE, PISTOLA,
-            SEMENTEIRA, ESCOPETA, CAJADO, BAZUCA, RAIO;
+            SEMENTEIRA, ESCOPETA, CAJADO, BAZUCA, RAIO, MARTELO, ARCO, GELO;
 
     static {
         SOCO = new WeaponDef("Soco", "👊", MELEE, 8, 0.9f, 110, Stat.MELEE, 1f,
@@ -145,7 +149,26 @@ public final class WeaponDef {
         RAIO.knockback = 2;
         RAIO.desc = "Raio pula entre 4 alvos.";
 
+        MARTELO = new WeaponDef("Martelo", "🔨", MELEE, 20, 1.5f, 120, Stat.MELEE, 1.5f,
+                SHAPE_HAMMER, 0xFF8A8F99, 25);
+        MARTELO.hitRadius = 42;
+        MARTELO.knockback = 42;
+        MARTELO.desc = "Esmaga e arremessa longe.";
+
+        ARCO = new WeaponDef("Arco", "🏹", RANGED, 14, 1.15f, 480, Stat.RANGED, 1.2f,
+                SHAPE_BOW, 0xFFB5793A, 22);
+        ARCO.pierce = 2;
+        ARCO.critBonus = 10;
+        ARCO.projSpeed = 950;
+        ARCO.desc = "Flecha atravessa 2, +10% crítico.";
+
+        GELO = new WeaponDef("Varinha de Gelo", "❄", ELEMENTAL, 6, 0.9f, 380, Stat.ELEMENTAL, 1f,
+                SHAPE_STAFF, 0xFF8FE3FF, 22);
+        GELO.slow = 2f;
+        GELO.projSpeed = 600;
+        GELO.desc = "Congela: inimigo fica lento.";
+
         ALL = new WeaponDef[]{SOCO, FACA, ESPADA, LANCA, ESTILINGUE, PISTOLA,
-                SEMENTEIRA, ESCOPETA, CAJADO, BAZUCA, RAIO};
+                SEMENTEIRA, ESCOPETA, CAJADO, BAZUCA, RAIO, MARTELO, ARCO, GELO};
     }
 }

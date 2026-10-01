@@ -43,6 +43,12 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
         super(ctx);
         prefs = new Prefs(ctx);
         ui = new Ui(game, prefs);
+        ui.setOnMusicChanged(new Runnable() {
+            @Override
+            public void run() {
+                applyMusic();
+            }
+        });
         sfx = new Sfx(ctx);
         vibrator = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
         game.fx = this;
@@ -58,6 +64,7 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
     // --- Ciclo de vida ---
 
     void resume() {
+        sfx.setMusic(prefs.music());
         if (running) return;
         running = true;
         thread = new Thread(this, "horta-loop");
@@ -78,6 +85,8 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
             events.add(new float[]{EV_CANCEL, 0, 0, 0});
         }
         ui.pauseIfPlaying();
+        ui.saveIfPossible();
+        sfx.setMusic(false);
     }
 
     void destroy() {
@@ -256,6 +265,21 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
 
     @Override
     public void runEnded(boolean won, int wave) {
-        prefs.recordRun(won, wave);
+        boolean[] before = ui.unlockedChars();
+        prefs.recordRun(won, wave, game.kills, game.difficulty);
+        boolean[] after = ui.unlockedChars();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < before.length; i++) {
+            if (!before[i] && after[i]) {
+                if (sb.length() > 0) sb.append(", ");
+                sb.append(com.escola.hortahostil.game.CharDef.ALL[i].name);
+            }
+        }
+        ui.setNewUnlocks(sb.toString());
+    }
+
+    /** Liga/desliga a música (chamado pela tela de menu). */
+    void applyMusic() {
+        sfx.setMusic(prefs.music());
     }
 }

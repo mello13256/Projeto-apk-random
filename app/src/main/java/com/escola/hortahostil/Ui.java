@@ -42,7 +42,10 @@ final class Ui {
     private static final int A_PLAY = 1, A_SOUND = 2, A_VIBRA = 3, A_CHAR = 4, A_START = 5,
             A_MENU = 6, A_PAUSE = 7, A_RESUME = 8, A_QUIT = 9, A_LEVEL = 10, A_LEVEL_REROLL = 11,
             A_BUY = 12, A_LOCK = 13, A_REROLL = 14, A_NEXT = 15, A_WEAPON = 16, A_SELL = 17,
-            A_COMBINE = 18, A_CLOSE = 19, A_AGAIN = 20, A_HELP = 21;
+            A_COMBINE = 18, A_CLOSE = 19, A_AGAIN = 20, A_HELP = 21, A_MUSIC = 22,
+            A_CONTINUE = 23, A_DIFF = 24, A_CRATE_TAKE = 25, A_CRATE_RECYCLE = 26, A_ITEM = 27,
+            A_RANDOM = 28;
+    private static final int RANDOM_CHAR = -1;
 
     private static final int[] TIER_COLOR = {0xFFD7D7D7, 0xFF4AA3FF, 0xFFB76BFF, 0xFFFF5A4A};
     private static final int[] TIER_BG = {0xFF3A3A3A, 0xFF1C3552, 0xFF3A2358, 0xFF55221C};
@@ -98,6 +101,15 @@ final class Ui {
     private boolean showHelp;
     private String toast = "";
     private float toastTime;
+    private int difficulty = 1;
+    private int tipItem = -1;
+    private float tipTime;
+    private String newUnlocks = "";
+    private Game.State lastState;
+    private Runnable onMusicChanged;
+    private final Paint vignettePaint = new Paint();
+    private final Paint slowPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private final Paint elitePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
 
     // Arena pre-desenhada
     private Bitmap arena;
@@ -116,6 +128,33 @@ final class Ui {
         flashPaint.setColorFilter(new PorterDuffColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_ATOP));
         burnPaint.setColorFilter(new PorterDuffColorFilter(0x88FF6A00, PorterDuff.Mode.SRC_ATOP));
         chargePaint.setColorFilter(new PorterDuffColorFilter(0x99FF2020, PorterDuff.Mode.SRC_ATOP));
+        slowPaint.setColorFilter(new PorterDuffColorFilter(0x7780D8FF, PorterDuff.Mode.SRC_ATOP));
+        elitePaint.setColorFilter(new PorterDuffColorFilter(0x55FFC400, PorterDuff.Mode.SRC_ATOP));
+        selectedChar = prefs.lastChar();
+        difficulty = prefs.lastDifficulty();
+    }
+
+    /** Chamado quando o jogador liga/desliga a música no menu. */
+    void setOnMusicChanged(Runnable r) {
+        onMusicChanged = r;
+    }
+
+    /** Quais personagens já estão liberados (pelos recordes salvos). */
+    boolean[] unlockedChars() {
+        boolean[] u = new boolean[CharDef.ALL.length];
+        for (int i = 0; i < u.length; i++) {
+            u[i] = CharDef.ALL[i].isUnlocked(prefs.bestWave(), prefs.wins(), prefs.totalKills());
+        }
+        return u;
+    }
+
+    void setNewUnlocks(String names) {
+        newUnlocks = names;
+    }
+
+    /** Salva a partida se estiver na loja (chamado ao sair do app). */
+    void saveIfPossible() {
+        if (game.state == Game.State.SHOP) prefs.saveRun(game.saveToString());
     }
 
     void setSize(int w, int h) {
@@ -231,10 +270,23 @@ final class Ui {
         Player p = game.player;
         switch (action) {
             case A_PLAY:
+                newUnlocks = "";
                 game.state = Game.State.CHAR_SELECT;
+                break;
+            case A_CONTINUE:
+                if (game.loadFromString(prefs.savedRun())) {
+                    showToast("Partida carregada: onda " + game.wave + " concluída");
+                } else {
+                    prefs.clearRun();
+                    showToast("Não deu pra carregar a partida salva.");
+                }
                 break;
             case A_SOUND:
                 prefs.setSound(!prefs.sound());
+                break;
+            case A_MUSIC:
+                prefs.setMusic(!prefs.music());
+                if (onMusicChanged != null) onMusicChanged.run();
                 break;
             case A_VIBRA:
                 prefs.setVibration(!prefs.vibration());
@@ -245,12 +297,39 @@ final class Ui {
             case A_CHAR:
                 selectedChar = arg;
                 break;
-            case A_START:
-                game.newRun(CharDef.ALL[selectedChar]);
+            case A_RANDOM:
+                selectedChar = RANDOM_CHAR;
+                break;
+            case A_DIFF:
+                difficulty = (difficulty + arg + Game.DIFF_NAMES.length) % Game.DIFF_NAMES.length;
+                break;
+            case A_START: {
+                boolean[] unlocked = unlockedChars();
+                int idx = selectedChar;
+                if (idx == RANDOM_CHAR) {
+                    int count = 0;
+                    for (boolean b : unlocked) if (b) count++;
+                    int pick = rng.nextInt(count);
+                    for (int i = 0; i < unlocked.length; i++) {
+                        if (unlocked[i] && pick-- == 0) {
+                            idx = i;
+                            break;
+                        }
+                    }
+                } else if (!unlocked[idx]) {
+                    showToast("Personagem bloqueado: " + CharDef.ALL[idx].unlockText());
+                    break;
+                }
+                prefs.setLastChoice(selectedChar == RANDOM_CHAR ? 0 : selectedChar, difficulty);
+                prefs.clearRun();
+                game.newRun(CharDef.ALL[idx], difficulty);
                 joyId = -1;
                 break;
+            }
             case A_AGAIN:
-                game.newRun(p != null ? p.character : CharDef.ALL[selectedChar]);
+                newUnlocks = "";
+                prefs.clearRun();
+                game.newRun(p != null ? p.character : CharDef.ALL[0], game.difficulty);
                 joyId = -1;
                 break;
             case A_MENU:
@@ -267,13 +346,19 @@ final class Ui {
             case A_QUIT:
                 game.paused = false;
                 game.state = Game.State.GAME_OVER;
-                prefs.recordRun(false, game.wave);
+                game.fx.runEnded(false, game.wave);
                 break;
             case A_LEVEL:
                 game.chooseLevel(arg);
                 break;
             case A_LEVEL_REROLL:
                 if (!game.rerollLevel()) showToast("Sementes insuficientes!");
+                break;
+            case A_CRATE_TAKE:
+                game.resolveCrate(true);
+                break;
+            case A_CRATE_RECYCLE:
+                game.resolveCrate(false);
                 break;
             case A_BUY: {
                 int r = game.buy(arg);
@@ -289,11 +374,19 @@ final class Ui {
                 break;
             case A_NEXT:
                 popupWeapon = -1;
+                tipItem = -1;
                 game.nextWave();
                 joyId = -1;
                 break;
             case A_WEAPON:
                 popupWeapon = arg;
+                break;
+            case A_ITEM:
+                if (tipItem == arg && tipTime > 0) tipTime = 0;
+                else {
+                    tipItem = arg;
+                    tipTime = 3f;
+                }
                 break;
             case A_SELL:
                 if (game.sellWeapon(popupWeapon)) popupWeapon = -1;
@@ -311,6 +404,8 @@ final class Ui {
             default:
                 break;
         }
+        // Na loja, qualquer mudança já fica salva (pra continuar depois).
+        if (game.state == Game.State.SHOP) prefs.saveRun(game.saveToString());
     }
 
     private void disabledTap(int action, int arg) {
@@ -338,6 +433,11 @@ final class Ui {
 
     void draw(Canvas c, float dt) {
         time += dt;
+        if (tipTime > 0f) tipTime -= dt;
+        if (game.state != lastState) {
+            if (game.state == Game.State.SHOP) prefs.saveRun(game.saveToString());
+            lastState = game.state;
+        }
         if (toastTime > 0f) toastTime -= dt;
         buttonCount = 0;
         c.save();
@@ -357,6 +457,9 @@ final class Ui {
                 break;
             case LEVEL_UP:
                 drawLevelUp(c);
+                break;
+            case CRATE:
+                drawCrate(c);
                 break;
             case SHOP:
                 drawShop(c);
@@ -384,24 +487,42 @@ final class Ui {
         drawMenuBackground(c);
         float cx = vw / 2;
         for (int i = 0; i < CharDef.ALL.length; i++) {
-            float x = cx + (i - (CharDef.ALL.length - 1) / 2f) * 96;
-            float y = 120 + (float) Math.sin(time * 3 + i) * 10;
-            emoji(c, CharDef.ALL[i].icon, x, y, 76, bmpPaint);
+            float x = cx + (i - (CharDef.ALL.length - 1) / 2f) * 88;
+            float y = 112 + (float) Math.sin(time * 3 + i) * 10;
+            emoji(c, CharDef.ALL[i].icon, x, y, 68, bmpPaint);
         }
-        text(c, "HORTA HOSTIL", cx, 265, 92, 0xFFFFD84A, Paint.Align.CENTER);
-        text(c, "Os insetos invadiram a horta. Só os legumes podem salvá-la!", cx, 315, 26,
+        text(c, "HORTA HOSTIL", cx, 250, 92, 0xFFFFD84A, Paint.Align.CENTER);
+        text(c, "Os insetos invadiram a horta. Só os legumes podem salvá-la!", cx, 298, 26,
                 0xFFE8F5D0, Paint.Align.CENTER);
 
-        button(c, cx - 170, 360, 340, 90, "JOGAR", A_PLAY, 0, C_GREEN, true, 44);
-        button(c, cx - 340, 470, 210, 66, prefs.sound() ? "Som: SIM" : "Som: NÃO", A_SOUND, 0,
-                C_GRAY, true, 26);
-        button(c, cx - 105, 470, 210, 66, prefs.vibration() ? "Vibrar: SIM" : "Vibrar: NÃO", A_VIBRA,
-                0, C_GRAY, true, 26);
-        button(c, cx + 130, 470, 210, 66, "Como jogar", A_HELP, 0, C_GRAY, true, 26);
+        String saved = prefs.savedRun();
+        if (saved != null) {
+            String wave = "";
+            int i = saved.indexOf("wave=");
+            if (i >= 0) wave = saved.substring(i + 5, saved.indexOf('\n', i));
+            button(c, cx - 350, 335, 340, 90, "CONTINUAR", A_CONTINUE, 0, C_GREEN, true, 40);
+            text(c, "depois da onda " + wave, cx - 180, 446, 20, 0xFFCFE3B8, Paint.Align.CENTER);
+            button(c, cx + 10, 335, 340, 90, "NOVO JOGO", A_PLAY, 0, C_ORANGE, true, 40);
+        } else {
+            button(c, cx - 170, 335, 340, 90, "JOGAR", A_PLAY, 0, C_GREEN, true, 44);
+        }
 
-        String rec = "Melhor onda: " + prefs.bestWave() + "   •   Vitórias: " + prefs.wins();
-        text(c, rec, cx, 590, 26, 0xFFCFE3B8, Paint.Align.CENTER);
-        text(c, "Projeto escolar • feito com Java puro", cx, 690, 20, 0x99FFFFFF,
+        float bw = 200, gap = 16, bx = cx - (bw * 4 + gap * 3) / 2;
+        button(c, bx, 465, bw, 62, prefs.sound() ? "Som: SIM" : "Som: NÃO", A_SOUND, 0, C_GRAY, true, 25);
+        button(c, bx + (bw + gap), 465, bw, 62, prefs.music() ? "Música: SIM" : "Música: NÃO", A_MUSIC, 0,
+                C_GRAY, true, 25);
+        button(c, bx + (bw + gap) * 2, 465, bw, 62, prefs.vibration() ? "Vibrar: SIM" : "Vibrar: NÃO", A_VIBRA,
+                0, C_GRAY, true, 25);
+        button(c, bx + (bw + gap) * 3, 465, bw, 62, "Como jogar", A_HELP, 0, C_GRAY, true, 25);
+
+        String rec = "Melhor onda: " + prefs.bestWave() + "   •   Vitórias: " + prefs.wins()
+                + "   •   Insetos derrotados: " + prefs.totalKills();
+        text(c, rec, cx, 580, 24, 0xFFCFE3B8, Paint.Align.CENTER);
+        int unlocked = 0;
+        for (boolean b : unlockedChars()) if (b) unlocked++;
+        text(c, "Personagens liberados: " + unlocked + "/" + CharDef.ALL.length, cx, 618, 22,
+                0xFFB8CFA0, Paint.Align.CENTER);
+        text(c, "Projeto escolar • feito com Java puro • v2.0", cx, 692, 20, 0x99FFFFFF,
                 Paint.Align.CENTER);
         if (showHelp) drawHelp(c);
     }
@@ -430,14 +551,14 @@ final class Ui {
         panel(c, x, y, w, h);
         text(c, "COMO JOGAR", vw / 2, y + 60, 40, 0xFFFFD84A, Paint.Align.CENTER);
         String[] lines = {
-                "• Arraste o dedo em qualquer lugar da tela para andar.",
-                "• Suas armas atacam SOZINHAS o inimigo mais próximo.",
-                "• Inimigos derrotados soltam sementes 🌱: pegue-as!",
-                "• Sementes dão experiência e compram coisas na loja.",
-                "• Sobreviva até o tempo da onda acabar.",
-                "• Entre as ondas: escolha melhorias e compre armas/itens.",
+                "• Arraste o dedo para andar. As armas atacam SOZINHAS.",
+                "• Inimigos soltam sementes 🌱: dão experiência e dinheiro.",
+                "• Elites 👑 são fortes, mas sempre deixam uma caixa 📦.",
+                "• Cada caixa vira um item grátis no fim da onda.",
+                "• Entre as ondas: escolha melhorias e compre na loja.",
                 "• Duas armas iguais do mesmo nível viram uma mais forte.",
-                "• Sobreviva às 20 ondas para salvar a horta!",
+                "• Toque num item para ver o que ele faz.",
+                "• A partida é salva na loja: dá pra continuar depois!",
         };
         for (int i = 0; i < lines.length; i++) {
             text(c, lines[i], x + 40, y + 120 + i * 44, 25, 0xFFFFFFFF, Paint.Align.LEFT);
@@ -447,43 +568,127 @@ final class Ui {
 
     // --- Selecao de personagem ---
 
+    private static final String[] DIFF_DESC = {
+            "Inimigos mais fracos. Bom pra aprender.",
+            "O jogo como ele deve ser.",
+            "Inimigos mais fortes e mais numerosos.",
+            "Mais elites e muito mais dano. Boa sorte!",
+    };
+
     private void drawCharSelect(Canvas c) {
-        text(c, "ESCOLHA SEU LEGUME", vw / 2, 62, 46, 0xFFFFD84A, Paint.Align.CENTER);
-        int cols = 3;
-        float gap = 18;
+        text(c, "ESCOLHA SEU LEGUME", vw / 2, 58, 44, 0xFFFFD84A, Paint.Align.CENTER);
+        boolean[] unlocked = unlockedChars();
+        int cols = 5;
+        float gap = 14;
         float cw = (vw - 60 - gap * (cols - 1)) / cols;
-        float ch = 238;
-        for (int i = 0; i < CharDef.ALL.length; i++) {
-            CharDef cd = CharDef.ALL[i];
+        float ch = 252;
+        int total = CharDef.ALL.length + 1; // + aleatório
+        for (int i = 0; i < total; i++) {
             float x = 30 + (i % cols) * (cw + gap);
-            float y = 95 + (i / cols) * (ch + gap);
-            boolean sel = i == selectedChar;
-            fill.setColor(sel ? 0xFF3F5A26 : 0xFF2A2116);
+            float y = 82 + (i / cols) * (ch + gap);
+            boolean random = i == CharDef.ALL.length;
+            boolean sel = random ? selectedChar == RANDOM_CHAR : i == selectedChar;
+            boolean open = random || unlocked[i];
+            fill.setColor(sel ? 0xFF3F5A26 : open ? 0xFF2A2116 : 0xFF1E1A14);
             rect.set(x, y, x + cw, y + ch);
             c.drawRoundRect(rect, 18, 18, fill);
             stroke.setStrokeWidth(sel ? 5 : 3);
-            stroke.setColor(sel ? 0xFFFFD84A : C_PANEL_BORDER);
+            stroke.setColor(sel ? 0xFFFFD84A : open ? C_PANEL_BORDER : 0xFF4A4038);
             c.drawRoundRect(rect, 18, 18, stroke);
-            registerButton(x, y, cw, ch, A_CHAR, i, true);
-
-            float bob = sel ? (float) Math.sin(time * 6) * 5 : 0;
-            emoji(c, cd.icon, x + 62, y + 70 + bob, 88, bmpPaint);
-            if (sel) drawEyes(c, x + 62, y + 70 + bob, 1f, 1f, 0f, false);
-            text(c, cd.name, x + 120, y + 48, 28, 0xFFFFFFFF, Paint.Align.LEFT);
-            text(c, cd.tagline, x + 120, y + 80, 20, 0xFFBFD6A6, Paint.Align.LEFT);
-            float ly = y + 138;
-            text(c, "Arma: " + cd.startWeapon.name, x + 22, ly, 21, 0xFFFFE08A, Paint.Align.LEFT);
-            ly += 27;
+            registerButton(x, y, cw, ch, random ? A_RANDOM : A_CHAR, i, true);
+            float cx = x + cw / 2;
+            float bob = sel ? (float) Math.sin(time * 6) * 4 : 0;
+            if (random) {
+                emoji(c, "🎲", cx, y + 52 + bob, 62, bmpPaint);
+                text(c, "Aleatório", cx, y + 112, 21, 0xFFFFFFFF, Paint.Align.CENTER);
+                wrapped(c, "Um legume liberado surpresa!", cx, y + 144, cw - 20, 17, 0xFFBFD6A6,
+                        Paint.Align.CENTER);
+                continue;
+            }
+            CharDef cd = CharDef.ALL[i];
+            if (!open) {
+                bmpPaint.setAlpha(70);
+                emoji(c, cd.icon, cx, y + 52, 62, bmpPaint);
+                bmpPaint.setAlpha(255);
+                emoji(c, "🔒", cx + 26, y + 70, 32, bmpPaint);
+                float ny = wrapped(c, cd.name, cx, y + 112, cw - 16, 20, 0xFF9A9A9A, Paint.Align.CENTER);
+                wrapped(c, cd.unlockText(), cx, ny + 8, cw - 20, 17, 0xFFFFC870, Paint.Align.CENTER);
+                continue;
+            }
+            emoji(c, cd.icon, cx, y + 52 + bob, 62, bmpPaint);
+            if (sel) drawEyes(c, cx, y + 50 + bob, 0.8f, 1f, 0f, false);
+            float ny = wrapped(c, cd.name, cx, y + 112, cw - 16, 20, 0xFFFFFFFF, Paint.Align.CENTER);
+            textFit(c, "Arma: " + cd.startWeapon.name, cx, ny + 2, 16, cw - 14, 0xFFFFE08A);
+            float ly = ny + 26;
             for (int m = 0; m < cd.mods.length; m += 2) {
                 int v = cd.mods[m + 1];
-                String s = Stat.format(cd.mods[m], v);
-                float colX = x + 22 + (m / 2 % 2) * (cw / 2 - 8);
-                text(c, s, colX, ly + (m / 4) * 26, 19, v >= 0 ? 0xFF8CF08C : 0xFFFF8080,
-                        Paint.Align.LEFT);
+                textFit(c, Stat.format(cd.mods[m], v), cx, ly, 16, cw - 14, v >= 0 ? 0xFF8CF08C : 0xFFFF8080);
+                ly += 20;
             }
         }
-        button(c, 30, VH - 92, 220, 70, "Voltar", A_MENU, 0, C_GRAY, true, 30);
-        button(c, vw - 330, VH - 96, 300, 78, "COMEÇAR!", A_START, 0, C_GREEN, true, 38);
+
+        // linha de baixo: voltar, dificuldade, começar
+        float by = VH - 98;
+        boolean narrow = vw < 1200;
+        float backW = narrow ? 150 : 190, startW = narrow ? 220 : 270;
+        button(c, 30, by + 8, backW, 72, "Voltar", A_MENU, 0, C_GRAY, true, 30);
+        float left = 30 + backW + 14, right = vw - 30 - startW - 14;
+        float cx = (left + right) / 2;
+        float half = Math.min(300, (right - left) / 2);
+        button(c, cx - half, by + 8, 56, 72, "◀", A_DIFF, -1, C_GRAY, true, 30);
+        button(c, cx + half - 56, by + 8, 56, 72, "▶", A_DIFF, 1, C_GRAY, true, 30);
+        float pw = half - 64;
+        fill.setColor(0x66000000);
+        rect.set(cx - pw, by + 4, cx + pw, by + 84);
+        c.drawRoundRect(rect, 16, 16, fill);
+        int[] diffColor = {0xFF8CF08C, 0xFFFFFFFF, 0xFFFFA040, 0xFFFF5A5A};
+        String title = Game.DIFF_ICONS[difficulty] + " " + Game.DIFF_NAMES[difficulty];
+        if (prefs.bestDifficultyWon() >= difficulty) title += "  ✔";
+        textFit(c, title, cx, by + 38, 28, pw * 2 - 16, diffColor[difficulty]);
+        textFit(c, DIFF_DESC[difficulty], cx, by + 68, 17, pw * 2 - 16, 0xFFCFE3B8);
+        boolean canStart = selectedChar == RANDOM_CHAR || unlocked[selectedChar];
+        button(c, vw - 30 - startW, by + 4, startW, 80, "COMEÇAR!", A_START, 0, C_GREEN, canStart, 36);
+    }
+
+    // --- Caixa ---
+
+    private void drawCrate(Canvas c) {
+        Player p = game.player;
+        ItemDef it = game.crateItem;
+        float statsW = vw < 1200 ? 250 : 300;
+        float areaW = vw - statsW - 48;
+        float cx = 24 + areaW / 2;
+        float tw = measure("CAIXA ENCONTRADA!", 46);
+        emoji(c, "📦", cx - tw / 2 - 12, 66, 60, bmpPaint);
+        text(c, "CAIXA ENCONTRADA!", cx + 28, 82, 46, 0xFFFFD84A, Paint.Align.CENTER);
+        if (p.crates > 1) {
+            text(c, "Mais " + (p.crates - 1) + (p.crates == 2 ? " caixa" : " caixas") + " depois desta",
+                    cx, 124, 22, 0xFFE8F5D0, Paint.Align.CENTER);
+        }
+        if (it != null) {
+            float w = Math.min(420, areaW - 40), h = 360;
+            float x = cx - w / 2, y = 150;
+            card(c, x, y, w, h, it.tier);
+            emoji(c, it.icon, cx, y + 80, 110, bmpPaint);
+            text(c, it.name, cx, y + 178, 34, TIER_COLOR[it.tier], Paint.Align.CENTER);
+            text(c, "Item • Raridade " + WeaponDef.TIER_NAMES[it.tier], cx, y + 208, 18, 0xFFB0B0B0,
+                    Paint.Align.CENTER);
+            float ly = y + 248;
+            for (int m = 0; m < it.mods.length; m += 2) {
+                int v = it.mods[m + 1];
+                text(c, Stat.format(it.mods[m], v), cx, ly, 22, v >= 0 ? 0xFF8CF08C : 0xFFFF8080,
+                        Paint.Align.CENTER);
+                ly += 28;
+            }
+            if (it.special != ItemDef.SP_NONE) {
+                wrapped(c, it.specialText, cx, ly, w - 30, 20, 0xFFFFE08A, Paint.Align.CENTER);
+            }
+            float bw = Math.min(260, (areaW - 60) / 2);
+            button(c, cx - bw - 10, VH - 120, bw, 84, "Pegar", A_CRATE_TAKE, 0, C_GREEN, true, 36);
+            buttonSeed(c, cx + 10, VH - 120, bw, 84, game.crateRecyclePrice(), A_CRATE_RECYCLE, 0,
+                    C_ORANGE, true, "Reciclar +");
+        }
+        drawStatsPanel(c, vw - statsW - 16, 16, statsW, VH - 32);
     }
 
     // --- Mundo ---
@@ -574,6 +779,13 @@ final class Ui {
                 c.drawCircle(pk.x, pk.y + bob, r, fill);
                 fill.setColor(0xFFD6FFB0);
                 c.drawCircle(pk.x - r * 0.3f, pk.y + bob - r * 0.3f, r * 0.4f, fill);
+            } else if (pk.type == Pickup.CRATE) {
+                fill.setColor(0x40000000);
+                rect.set(pk.x - 18, pk.y + 12, pk.x + 18, pk.y + 22);
+                c.drawOval(rect, fill);
+                fill.setColor(0x55FFD84A);
+                c.drawCircle(pk.x, pk.y + bob, 26 + (float) Math.sin(time * 6) * 3, fill);
+                emoji(c, "📦", pk.x, pk.y + bob, 40, bmpPaint);
             } else {
                 emoji(c, "🍎", pk.x, pk.y + bob, 34, bmpPaint);
             }
@@ -590,7 +802,7 @@ final class Ui {
         c.drawOval(rect, fill);
 
         // inimigos
-        for (Enemy e : game.enemies) drawEnemy(c, e);
+        for (Enemy e : game.enemies) if (!e.dead) drawEnemy(c, e);
 
         // jogador e armas
         drawPlayer(c, p);
@@ -605,6 +817,11 @@ final class Ui {
                 stroke.setColor(0xFFFFFFFF);
                 stroke.setStrokeWidth(3);
                 c.drawLine(b.x - b.vx * 0.03f, b.y - b.vy * 0.03f, b.x, b.y, stroke);
+            } else if (b.slow > 0) {
+                fill.setColor(0x6680D8FF);
+                c.drawCircle(b.x, b.y, b.radius * 1.7f, fill);
+                fill.setColor(0xFFE6FAFF);
+                c.drawCircle(b.x, b.y, b.radius, fill);
             } else if (b.burn > 0) {
                 fill.setColor(0x66FF6A00);
                 c.drawCircle(b.x, b.y, b.radius * 1.7f, fill);
@@ -658,19 +875,26 @@ final class Ui {
                 || (e.def.ai == EnemyDef.AI_BOSS_ANT && e.aiState == 2)) {
             pnt = chargePaint;
             ox = (rng.nextFloat() - 0.5f) * 6;
-        } else if (e.burnTime > 0) pnt = burnPaint;
+        } else if (e.slowTime > 0) pnt = slowPaint;
+        else if (e.burnTime > 0) pnt = burnPaint;
+        else if (e.elite) pnt = elitePaint;
+        if (e.elite) {
+            fill.setColor(0x55FFC400);
+            c.drawCircle(e.x, e.y, e.radius * 1.25f + (float) Math.sin(time * 8) * 3, fill);
+        }
         c.save();
         c.translate(e.x + ox, e.y);
         if (!e.facingLeft) c.scale(-1, 1);
         c.scale(1 + squash, 1 - squash);
         emoji(c, e.def.icon, 0, 0, size, pnt);
         c.restore();
+        if (e.elite) emoji(c, "👑", e.x, e.y - e.radius * 1.2f, 30, bmpPaint);
         if (!e.def.boss && e.hp < e.maxHp) {
             float w = e.radius * 1.6f;
-            float y = e.y - e.radius * 1.25f;
+            float y = e.y - e.radius * (e.elite ? 1.6f : 1.25f);
             fill.setColor(0xAA000000);
             c.drawRect(e.x - w / 2 - 1, y - 1, e.x + w / 2 + 1, y + 5, fill);
-            fill.setColor(0xFFFF5040);
+            fill.setColor(e.elite ? 0xFFFFC400 : 0xFFFF5040);
             c.drawRect(e.x - w / 2, y, e.x - w / 2 + w * Math.max(0, e.hp / e.maxHp), y + 4, fill);
         }
     }
@@ -769,6 +993,31 @@ final class Ui {
                 fill.setColor(tierColor);
                 c.drawCircle(-12, 0, 3, fill);
                 break;
+            case WeaponDef.SHAPE_BOW:
+                stroke.setColor(d.color);
+                stroke.setStrokeWidth(5);
+                rect.set(-10, -18, 10, 18);
+                c.drawArc(rect, -90, 180, false, stroke);
+                stroke.setColor(0xFFEEEEEE);
+                stroke.setStrokeWidth(1.5f);
+                c.drawLine(0, -18, 0, 18, stroke);
+                stroke.setColor(0xFF6B4423);
+                stroke.setStrokeWidth(3);
+                c.drawLine(-4, 0, 16, 0, stroke);
+                fill.setColor(tierColor);
+                c.drawCircle(10, 0, 3, fill);
+                break;
+            case WeaponDef.SHAPE_HAMMER:
+                fill.setColor(0xFF6B4423);
+                rect.set(-14, -3.5f, 16, 3.5f);
+                c.drawRoundRect(rect, 2, 2, fill);
+                fill.setColor(d.color);
+                rect.set(12, -14, 30, 14);
+                c.drawRoundRect(rect, 4, 4, fill);
+                c.drawRoundRect(rect, 4, 4, stroke);
+                fill.setColor(tierColor);
+                c.drawCircle(-10, 0, 3.5f, fill);
+                break;
             default: // TUBE
                 fill.setColor(d.color);
                 rect.set(-12, -8, 24, 7);
@@ -788,6 +1037,16 @@ final class Ui {
 
     private void drawHud(Canvas c) {
         Player p = game.player;
+        // aviso de vida baixa: bordas vermelhas pulsando
+        float frac = p.hp / p.maxHp();
+        if (frac < 0.3f && !game.ending) {
+            float pulse = 0.55f + 0.45f * (float) Math.sin(time * 7);
+            int a = (int) (150 * pulse * (1f - frac / 0.3f * 0.5f));
+            vignettePaint.setShader(new android.graphics.RadialGradient(vw / 2, VH / 2, vw * 0.62f,
+                    new int[]{0x00FF0000, 0x00FF0000, Color.argb(a, 200, 0, 0)},
+                    new float[]{0f, 0.6f, 1f}, android.graphics.Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, vw, VH, vignettePaint);
+        }
         // vida
         bar(c, 18, 16, 320, 34, p.hp / p.maxHp(), 0xFFE0413A, 0xFF3A1210);
         text(c, Math.max(0, (int) Math.ceil(p.hp)) + " / " + p.maxHp(), 178, 42, 24, 0xFFFFFFFF,
@@ -798,10 +1057,15 @@ final class Ui {
         // sementes
         seedIcon(c, 34, 104, 12);
         text(c, String.valueOf(p.materials), 56, 115, 32, 0xFFFFFFFF, Paint.Align.LEFT);
+        if (p.crates > 0) {
+            emoji(c, "📦", 34, 148, 30, bmpPaint);
+            text(c, "x" + p.crates, 56, 158, 26, 0xFFFFD84A, Paint.Align.LEFT);
+        }
 
         // onda e tempo
-        text(c, "ONDA " + game.wave, vw / 2, 40, 28, 0xFFFFFFFF, Paint.Align.CENTER);
-        int left = (int) Math.ceil(Math.max(0, game.waveDuration - game.waveTime));
+        text(c, "ONDA " + game.wave + (game.difficulty != 1 ? "  •  " + Game.DIFF_NAMES[game.difficulty] : ""),
+                vw / 2, 40, 28, 0xFFFFFFFF, Paint.Align.CENTER);
+        int left = game.ending ? 0 : (int) Math.ceil(Math.max(0, game.waveDuration - game.waveTime));
         text(c, String.valueOf(left), vw / 2, 96, 56, left <= 5 ? 0xFFFF6A5A : 0xFFFFFFFF,
                 Paint.Align.CENTER);
 
@@ -849,7 +1113,8 @@ final class Ui {
         button(c, cx - 170, 180, 340, 84, "Continuar", A_RESUME, 0, C_GREEN, true, 36);
         button(c, cx - 170, 285, 340, 70, "Desistir", A_QUIT, 0, C_RED, true, 30);
         drawWeaponRow(c, 40, 420, cx * 2 - 80, false);
-        drawItemsGrid(c, 40, 570, cx * 2 - 80, 130);
+        drawItemsGrid(c, 40, 590, cx * 2 - 80, 110);
+        if (popupWeapon < 0 && tipItem >= 0 && tipTime > 0) drawTooltip(c);
         drawStatsPanel(c, vw - statsW - 16, 16, statsW, VH - 32);
     }
 
@@ -937,6 +1202,10 @@ final class Ui {
                             v >= 0 ? 0xFF8CF08C : 0xFFFF8080, Paint.Align.LEFT);
                     ly += 24;
                 }
+                if (o.item.special != ItemDef.SP_NONE) {
+                    wrapped(c, o.item.specialText, x + 14, ly, cw - 28, narrow ? 15 : 17, 0xFFFFE08A,
+                            Paint.Align.LEFT);
+                }
             }
             // cadeado
             float lx = x + cw - 50, lyy = y + 8;
@@ -954,7 +1223,7 @@ final class Ui {
 
         // armas e itens
         drawWeaponRow(c, 24, 440, areaW, true);
-        drawItemsGrid(c, 24, 565, areaW, VH - 565 - 10);
+        drawItemsGrid(c, 24, 592, areaW, VH - 592 - 8);
 
         // botoes da direita
         float sx = vw - statsW - 16;
@@ -964,6 +1233,7 @@ final class Ui {
                 "Rolar ");
         button(c, sx, VH - 96, statsW, 80, "Próxima onda ▶", A_NEXT, 0, C_GREEN, true, 30);
 
+        if (popupWeapon < 0 && tipItem >= 0 && tipTime > 0) drawTooltip(c);
         if (popupWeapon >= 0 && popupWeapon < p.weapons.size()) drawWeaponPopup(c);
     }
 
@@ -1001,6 +1271,10 @@ final class Ui {
                 emoji(c, wp.def.icon, sx + s / 2, y + s / 2 - 6, s * 0.55f, bmpPaint);
                 text(c, WeaponDef.TIER_NAMES[wp.tier], sx + s / 2, y + s - 8, 18, TIER_COLOR[wp.tier],
                         Paint.Align.CENTER);
+                if (wp.waveDamage > 0) {
+                    text(c, shortNum(wp.waveDamage), sx + s / 2, y + s + 22, 17, 0xFFFFB0A0,
+                            Paint.Align.CENTER);
+                }
                 if (clickable) {
                     registerButton(sx, y, s, s, A_WEAPON, i, true);
                     if (game.canCombine(i)) {
@@ -1016,8 +1290,8 @@ final class Ui {
             }
         }
         if (clickable && w > 1000) {
-            text(c, "(toque numa arma para vender ou combinar)", x + 190, y - 10, 17, 0x99FFFFFF,
-                    Paint.Align.LEFT);
+            text(c, "(toque numa arma para vender ou combinar • número = dano na última onda)", x + 190,
+                    y - 10, 16, 0x99FFFFFF, Paint.Align.LEFT);
         }
     }
 
@@ -1030,6 +1304,8 @@ final class Ui {
             counts.put(it, n == null ? 1 : n + 1);
         }
         float s = 50;
+        tipX = x;
+        tipY = y;
         int perRow = Math.max(1, (int) ((w + 6) / (s + 6)));
         int rows = Math.max(1, (int) ((h + 6) / (s + 6)));
         int i = 0;
@@ -1042,7 +1318,63 @@ final class Ui {
             if (e.getValue() > 1) {
                 text(c, "x" + e.getValue(), ix + s - 3, iy + s - 3, 16, 0xFFFFFFFF, Paint.Align.RIGHT);
             }
+            int idx = indexOfItem(e.getKey());
+            registerButton(ix, iy, s, s, A_ITEM, idx, true);
+            if (idx == tipItem && tipTime > 0) {
+                tipX = ix;
+                tipY = iy;
+                stroke.setColor(0xFFFFFFFF);
+                stroke.setStrokeWidth(3);
+                rect.set(ix, iy, ix + s, iy + s);
+                c.drawRoundRect(rect, 14, 14, stroke);
+            }
             i++;
+        }
+    }
+
+    private float tipX, tipY;
+
+    private static int indexOfItem(ItemDef it) {
+        for (int i = 0; i < ItemDef.ALL.length; i++) if (ItemDef.ALL[i] == it) return i;
+        return -1;
+    }
+
+    private static String shortNum(int v) {
+        if (v >= 10000) return (v / 1000) + "k";
+        if (v >= 1000) return String.format(java.util.Locale.US, "%.1fk", v / 1000f);
+        return String.valueOf(v);
+    }
+
+    /** Caixinha com o que o item faz (aparece ao tocar no item). */
+    private void drawTooltip(Canvas c) {
+        ItemDef it = ItemDef.ALL[tipItem];
+        ArrayList<String> lines = new ArrayList<>();
+        ArrayList<Integer> colors = new ArrayList<>();
+        lines.add(it.name);
+        colors.add(TIER_COLOR[it.tier]);
+        for (int m = 0; m < it.mods.length; m += 2) {
+            lines.add(Stat.format(it.mods[m], it.mods[m + 1]));
+            colors.add(it.mods[m + 1] >= 0 ? 0xFF8CF08C : 0xFFFF8080);
+        }
+        if (it.special != ItemDef.SP_NONE) {
+            lines.add(it.specialText);
+            colors.add(0xFFFFE08A);
+        }
+        float w = 0;
+        for (String l : lines) w = Math.max(w, measure(l, 20));
+        w += 28;
+        float h = lines.size() * 27 + 16;
+        float x = Math.min(tipX, vw - w - 10);
+        float y = tipY - h - 10;
+        if (y < 10) y = tipY + 60;
+        fill.setColor(0xF0121212);
+        rect.set(x, y, x + w, y + h);
+        c.drawRoundRect(rect, 12, 12, fill);
+        stroke.setColor(TIER_COLOR[it.tier]);
+        stroke.setStrokeWidth(2);
+        c.drawRoundRect(rect, 12, 12, stroke);
+        for (int i = 0; i < lines.size(); i++) {
+            text(c, lines.get(i), x + 14, y + 32 + i * 27, 20, colors.get(i), Paint.Align.LEFT);
         }
     }
 
@@ -1056,7 +1388,9 @@ final class Ui {
         emoji(c, w.def.icon, x + 70, y + 70, 80, bmpPaint);
         text(c, w.title(), x + 130, y + 66, 34, TIER_COLOR[w.tier], Paint.Align.LEFT);
         text(c, w.def.typeName(), x + 130, y + 98, 20, 0xFFB0B0B0, Paint.Align.LEFT);
-        weaponStats(c, w, x + 30, y + 160, pw - 60, true);
+        float ly = weaponStats(c, w, x + 30, y + 150, pw - 60, true);
+        text(c, "Dano na última onda: " + w.waveDamage + "   •   Total: " + w.totalDamage, x + 30, ly + 4,
+                18, 0xFFFFB0A0, Paint.Align.LEFT);
         boolean canCombine = game.canCombine(popupWeapon);
         float bw = (pw - 60 - 20) / 2;
         buttonSeed(c, x + 30, y + ph - 150, bw, 64, w.sellPrice(game.wave + 1), A_SELL, 0, C_RED,
@@ -1092,26 +1426,50 @@ final class Ui {
         drawMenuBackground(c);
         float cx = vw / 2;
         if (won) {
-            text(c, "A HORTA ESTÁ SALVA!", cx, 120, 72, 0xFFFFD84A, Paint.Align.CENTER);
-            text(c, "Você sobreviveu às 20 ondas. Parabéns!", cx, 170, 28, 0xFFE8F5D0,
-                    Paint.Align.CENTER);
+            text(c, "A HORTA ESTÁ SALVA!", cx, 100, 68, 0xFFFFD84A, Paint.Align.CENTER);
+            text(c, "Você sobreviveu às 20 ondas no " + Game.DIFF_NAMES[game.difficulty] + ". Parabéns!",
+                    cx, 145, 26, 0xFFE8F5D0, Paint.Align.CENTER);
         } else {
-            text(c, "VIROU SALADA!", cx, 120, 76, 0xFFFF6A5A, Paint.Align.CENTER);
-            text(c, "Os insetos venceram desta vez...", cx, 170, 28, 0xFFE8F5D0, Paint.Align.CENTER);
+            text(c, "VIROU SALADA!", cx, 100, 72, 0xFFFF6A5A, Paint.Align.CENTER);
+            text(c, "Os insetos venceram desta vez...", cx, 145, 26, 0xFFE8F5D0, Paint.Align.CENTER);
         }
         if (p != null) {
-            float by = 215;
-            emoji(c, p.character.icon, cx, by + 60, 110, bmpPaint);
-            drawEyes(c, cx, by + 56, 1.4f, 0, won ? -1 : 1, true);
+            // lado esquerdo: personagem e números
+            float lx = cx - 250;
+            emoji(c, p.character.icon, lx, 240, 100, bmpPaint);
+            drawEyes(c, lx, 236, 1.3f, 0, won ? -1 : 1, true);
             String[] lines = {
                     "Onda alcançada: " + game.wave,
+                    "Dificuldade: " + Game.DIFF_NAMES[game.difficulty],
                     "Nível: " + p.level,
                     "Insetos derrotados: " + game.kills,
                     "Melhor onda: " + prefs.bestWave(),
             };
             for (int i = 0; i < lines.length; i++) {
-                text(c, lines[i], cx, by + 170 + i * 40, 30, 0xFFFFFFFF, Paint.Align.CENTER);
+                text(c, lines[i], lx, 330 + i * 36, 25, 0xFFFFFFFF, Paint.Align.CENTER);
             }
+            // lado direito: dano de cada arma na partida
+            float rx = cx + 40, ry = 200;
+            text(c, "Dano das armas", rx, ry, 26, 0xFFFFD84A, Paint.Align.LEFT);
+            int best = 1;
+            for (Weapon w : p.weapons) best = Math.max(best, w.totalDamage);
+            for (int i = 0; i < p.weapons.size(); i++) {
+                Weapon w = p.weapons.get(i);
+                float y = ry + 22 + i * 46;
+                emoji(c, w.def.icon, rx + 18, y + 18, 34, bmpPaint);
+                fill.setColor(0x55000000);
+                rect.set(rx + 44, y + 6, rx + 344, y + 30);
+                c.drawRoundRect(rect, 8, 8, fill);
+                fill.setColor(TIER_COLOR[w.tier]);
+                rect.set(rx + 44, y + 6, rx + 44 + 300f * w.totalDamage / best, y + 30);
+                c.drawRoundRect(rect, 8, 8, fill);
+                text(c, shortNum(w.totalDamage), rx + 352, y + 27, 20, 0xFFFFFFFF, Paint.Align.LEFT);
+            }
+        }
+        if (!newUnlocks.isEmpty()) {
+            float a = 0.75f + 0.25f * (float) Math.sin(time * 5);
+            text(c, "🔓 Novo personagem liberado: " + newUnlocks + "!", cx, VH - 150, 28,
+                    Color.argb((int) (255 * a), 255, 216, 74), Paint.Align.CENTER);
         }
         button(c, cx - 360, VH - 120, 340, 84, "Jogar de novo", A_AGAIN, 0, C_GREEN, true, 34);
         button(c, cx + 20, VH - 120, 340, 84, "Menu", A_MENU, 0, C_GRAY, true, 34);
@@ -1262,6 +1620,12 @@ final class Ui {
         textOutline.setAlpha(Color.alpha(color));
         c.drawText(s, x, y, textOutline);
         c.drawText(s, x, y, textPaint);
+    }
+
+    /** Texto centralizado que diminui a fonte até caber na largura. */
+    private void textFit(Canvas c, String s, float x, float y, float size, float maxW, int color) {
+        while (size > 10 && measure(s, size) > maxW) size -= 1;
+        text(c, s, x, y, size, color, Paint.Align.CENTER);
     }
 
     private float measure(String s, float size) {

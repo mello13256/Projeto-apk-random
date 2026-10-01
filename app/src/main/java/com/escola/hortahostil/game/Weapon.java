@@ -19,6 +19,10 @@ public final class Weapon {
     public float dirX, dirY;
     public float reach;
     public float tipX, tipY;
+
+    // Estatísticas de dano
+    public int waveDamage;
+    public int totalDamage;
     final ArrayList<Enemy> hitList = new ArrayList<>();
 
     public Weapon(WeaponDef def, int tier) {

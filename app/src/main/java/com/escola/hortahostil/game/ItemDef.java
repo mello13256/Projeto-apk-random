@@ -6,12 +6,36 @@ public final class ItemDef {
     public final String icon;
     public final int tier; // 0..3
     public final int[] mods; // pares (atributo, valor)
+    /** Efeito especial (veja SP_*) e sua força. */
+    public int special = SP_NONE;
+    public int specialValue;
+    public String specialText = "";
+
+    public static final int SP_NONE = -1;
+    /** % a mais de alcance para pegar sementes. */
+    public static final int SP_MAGNET = 0;
+    /** Chance (%) do inimigo explodir ao morrer. */
+    public static final int SP_BOOM = 1;
+    /** Dano devolvido a quem encosta em você. */
+    public static final int SP_THORNS = 2;
+    /** % a mais de chance de achar caixas. */
+    public static final int SP_CRATE = 3;
+    /** Cura extra das frutas. */
+    public static final int SP_FRUIT = 4;
+    public static final int SP_COUNT = 5;
 
     ItemDef(String name, String icon, int tier, int... mods) {
         this.name = name;
         this.icon = icon;
         this.tier = tier;
         this.mods = mods;
+    }
+
+    private ItemDef sp(int special, int value, String text) {
+        this.special = special;
+        this.specialValue = value;
+        this.specialText = text;
+        return this;
     }
 
     public void applyTo(int[] stats) {
@@ -55,5 +79,12 @@ public final class ItemDef {
             new ItemDef("Dragão", "🐉", 3, Stat.MELEE, 5, Stat.RANGED, 5, Stat.ELEMENTAL, 5, Stat.HP, -10),
             new ItemDef("Estrela", "⭐", 3, Stat.HP, 20, Stat.ARMOR, 5, Stat.REGEN, 5),
             new ItemDef("Coração de Ouro", "💛", 3, Stat.LUCK, 25, Stat.HARVEST, 10, Stat.CRIT, 10),
+            // Itens com efeito especial
+            new ItemDef("Redemoinho", "🌀", 0, Stat.SPEED, 2).sp(SP_MAGNET, 60, "+60% alcance de coleta"),
+            new ItemDef("Banana", "🍌", 0, Stat.HP, 1).sp(SP_FRUIT, 3, "Frutas curam +3"),
+            new ItemDef("Rosa", "🌹", 1, Stat.ARMOR, 1).sp(SP_THORNS, 6, "Espinhos: 6 de dano em quem encosta"),
+            new ItemDef("Mapa do Tesouro", "🗺", 1, Stat.LUCK, 5).sp(SP_CRATE, 100, "+100% chance de caixas"),
+            new ItemDef("Fogos", "🎆", 2, Stat.ELEMENTAL, 1).sp(SP_BOOM, 15, "15% dos inimigos explodem ao morrer"),
+            new ItemDef("Vulcão", "🌋", 3, Stat.DAMAGE, 5).sp(SP_BOOM, 35, "35% dos inimigos explodem ao morrer"),
     };
 }

@@ -13,13 +13,15 @@ import java.util.Random;
 public class SimTest {
     public static void main(String[] args) {
         int runs = args.length > 0 ? Integer.parseInt(args[0]) : 12;
+        int diff = Integer.getInteger("diff", 1);
+        int saves = 0, crates = 0, elites = 0;
         int wins = 0;
         long totalWave = 0;
         for (int r = 0; r < runs; r++) {
             CharDef c = CharDef.ALL[r % CharDef.ALL.length];
             Random rng = new Random(1000 + r);
             Game g = new Game(new Random(r));
-            g.newRun(c);
+            g.newRun(c, diff);
             int guard = 0;
             float bossTime = 0;
             StringBuilder log = new StringBuilder();
@@ -31,12 +33,24 @@ public class SimTest {
                         if (g.boss != null) bossTime += 1f / 60f;
                         break;
                     }
+                    case CRATE:
+                        crates++;
+                        g.resolveCrate(rng.nextInt(3) != 0);
+                        break;
                     case LEVEL_UP:
                         if (rng.nextInt(5) == 0 && g.player.materials > g.levelRerollCost() + 20) g.rerollLevel();
                         g.chooseLevel(rng.nextInt(4));
                         break;
-                    case SHOP:
+                    case SHOP: {
+                        // salvar e carregar tem que dar o mesmo resultado
+                        String saved = g.saveToString();
+                        Game copy = new Game(new Random(1));
+                        if (!copy.loadFromString(saved) || !saved.equals(copy.saveToString())) {
+                            throw new IllegalStateException("save/load falhou:\n" + saved);
+                        }
+                        saves++;
                         shop(g, rng);
+                    }
                         log.append(String.format("  onda %2d: nv %2d, armas %d, itens %2d, mat %4d, hp %d, abates %d%n",
                                 g.wave, g.player.level, g.player.weapons.size(), g.player.items.size(),
                                 g.player.materials, g.player.maxHp(), g.kills));
@@ -53,7 +67,8 @@ public class SimTest {
                     c.name, won ? "VENCEU" : "morreu", g.wave, g.kills, bossTime);
             if (args.length > 1) System.out.print(log);
         }
-        System.out.printf("Vitorias: %d/%d  onda media: %.1f%n", wins, runs, totalWave / (float) runs);
+        System.out.printf("Vitorias: %d/%d  onda media: %.1f  (dificuldade %s, %d saves testados, %d caixas)%n",
+                wins, runs, totalWave / (float) runs, Game.DIFF_NAMES[diff], saves, crates);
     }
 
     /**

@@ -26,6 +26,12 @@ final class Sfx {
     private final long[] last = new long[COUNT];
     volatile boolean enabled = true;
 
+    // Música de fundo (um loop curto gerado por código)
+    private int musicId;
+    private volatile boolean musicLoaded;
+    private volatile boolean wantMusic;
+    private int musicStream;
+
     Sfx(Context ctx) {
         AudioAttributes attrs = new AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_GAME)
@@ -33,6 +39,15 @@ final class Sfx {
                 .build();
         pool = new SoundPool.Builder().setMaxStreams(8).setAudioAttributes(attrs).build();
         File dir = ctx.getCacheDir();
+        pool.setOnLoadCompleteListener(new SoundPool.OnLoadCompleteListener() {
+            @Override
+            public void onLoadComplete(SoundPool sp, int sampleId, int status) {
+                if (sampleId == musicId && status == 0) {
+                    musicLoaded = true;
+                    if (wantMusic) startMusic();
+                }
+            }
+        });
         for (int i = 0; i < COUNT; i++) {
             try {
                 File f = new File(dir, "sfx_v1_" + i + ".wav");
@@ -45,6 +60,36 @@ final class Sfx {
             } catch (Exception e) {
                 ids[i] = 0;
             }
+        }
+        try {
+            File f = new File(dir, "music_v1.wav");
+            if (!f.exists()) {
+                FileOutputStream out = new FileOutputStream(f);
+                out.write(wav(music()));
+                out.close();
+            }
+            musicId = pool.load(f.getAbsolutePath(), 1);
+        } catch (Exception e) {
+            musicId = 0;
+        }
+    }
+
+    /** Liga ou desliga a música (pode ser chamado de qualquer thread). */
+    synchronized void setMusic(boolean on) {
+        wantMusic = on;
+        if (on) startMusic();
+        else stopMusic();
+    }
+
+    private synchronized void startMusic() {
+        if (!wantMusic || !musicLoaded || musicStream != 0) return;
+        musicStream = pool.play(musicId, 0.33f, 0.33f, 0, -1, 1f);
+    }
+
+    private synchronized void stopMusic() {
+        if (musicStream != 0) {
+            pool.stop(musicStream);
+            musicStream = 0;
         }
     }
 
@@ -77,6 +122,69 @@ final class Sfx {
             case Fx.WAVE_END: return arpeggio(new float[]{392, 523, 659, 784, 1047}, 0.09f, 0);
             case Fx.KILL: return sweep(0.08f, 420, 900, 1);
             default: return sweep(0.16f, 160, 130, 1); // ERROR
+        }
+    }
+
+    /**
+     * Loop de 8 segundos (120 BPM, 4 compassos: Lá menor, Fá, Dó, Sol):
+     * baixo, arpejo, bumbo e chimbal.
+     */
+    private static float[] music() {
+        final float sixteenth = 0.125f;
+        final int steps = 64;
+        int per = (int) (sixteenth * RATE);
+        float[] s = new float[per * steps];
+        int[][] chords = {{57, 60, 64}, {53, 57, 60}, {48, 52, 55}, {55, 59, 62}};
+        int[] arp = {0, 1, 2, 3, 2, 1, 0, 1, 0, 1, 2, 3, 4, 3, 2, 1};
+        Random r = new Random(3);
+        for (int step = 0; step < steps; step++) {
+            int[] ch = chords[step / 16];
+            int start = step * per;
+            // arpejo (onda quadrada, baixinho)
+            int idx = arp[step % 16];
+            int midi = ch[idx % 3] + 12 * (idx / 3) + 12;
+            addTone(s, start, per, midiFreq(midi), 1, 0.10f, 6f);
+            // baixo (triangular) em cada tempo, oitava no contratempo
+            if (step % 4 == 0) addTone(s, start, per * 3, midiFreq(ch[0] - 24), 3, 0.32f, 2.5f);
+            if (step % 4 == 2) addTone(s, start, per, midiFreq(ch[0] - 12), 3, 0.18f, 6f);
+            // bumbo nos tempos 1 e 3
+            if (step % 8 == 0) {
+                for (int i = 0; i < per * 2 && start + i < s.length; i++) {
+                    float t = i / (float) RATE;
+                    float f = 110f * (float) Math.exp(-t * 18) + 40f;
+                    s[start + i] += (float) Math.sin(2 * Math.PI * f * t) * 0.45f * (float) Math.exp(-t * 12);
+                }
+            }
+            // chimbal no contratempo
+            if (step % 2 == 1) {
+                float y = 0;
+                for (int i = 0; i < per / 3; i++) {
+                    float x = r.nextFloat() * 2 - 1;
+                    y = x - y * 0.5f;
+                    s[start + i] += y * 0.05f * (1f - i / (per / 3f));
+                }
+            }
+        }
+        float peak = 0;
+        for (float v : s) peak = Math.max(peak, Math.abs(v));
+        if (peak > 0) for (int i = 0; i < s.length; i++) s[i] = s[i] / peak * 0.8f;
+        return s;
+    }
+
+    private static float midiFreq(int midi) {
+        return (float) (440.0 * Math.pow(2, (midi - 69) / 12.0));
+    }
+
+    /** shape: 1 quadrada, 3 triangular. Volume cai exponencialmente (decay). */
+    private static void addTone(float[] s, int start, int len, float freq, int shape, float vol, float decay) {
+        double phase = 0;
+        for (int i = 0; i < len && start + i < s.length; i++) {
+            phase += freq / RATE;
+            double ph = phase - Math.floor(phase);
+            float v = shape == 1 ? (ph < 0.5 ? 1f : -1f) : (float) (1 - 4 * Math.abs(ph - 0.5));
+            float t = i / (float) RATE;
+            float env = Math.min(1f, i / 60f) * (float) Math.exp(-t * decay);
+            s[start + i] += v * vol * env;
         }
     }
 

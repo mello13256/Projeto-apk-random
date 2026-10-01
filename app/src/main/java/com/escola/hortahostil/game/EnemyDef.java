@@ -7,6 +7,7 @@ public final class EnemyDef {
     public static final int AI_CHARGE = 2;
     public static final int AI_BOSS_SNAIL = 3;
     public static final int AI_BOSS_ANT = 4;
+    public static final int AI_ZIGZAG = 5;
 
     public final String name;
     public final String icon;
@@ -51,5 +52,8 @@ public final class EnemyDef {
     public static final EnemyDef FORMIGA_IMPERATRIZ = new EnemyDef("Formiga Imperatriz", "🐜", AI_BOSS_ANT,
             5000, 95, 8, 0f, 70, 80, 20, true);
 
-    public static final EnemyDef[] SPAWNABLE = {LAGARTA, VESPA, ARANHA, JOANINHA, ESCORPIAO};
+    public static final EnemyDef MARIPOSA = new EnemyDef("Mariposa", "🦋", AI_ZIGZAG,
+            4, 150, 1, 0.5f, 17, 1, 4, false);
+
+    public static final EnemyDef[] SPAWNABLE = {LAGARTA, VESPA, ARANHA, JOANINHA, ESCORPIAO, MARIPOSA};
 }

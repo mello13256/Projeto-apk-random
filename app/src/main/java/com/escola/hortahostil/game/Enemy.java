@@ -25,6 +25,11 @@ public final class Enemy {
     public float dashX, dashY;
     public float spiral;
 
+    // Elite (versão dourada e mais forte) e lentidão (gelo)
+    public boolean elite;
+    public float slowTime;
+    public Weapon burnSource;
+
     public Enemy(EnemyDef def, float x, float y, float hpMult, int wave, float speedVar) {
         this.def = def;
         this.x = x;

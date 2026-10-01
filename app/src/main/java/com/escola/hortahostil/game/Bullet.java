@@ -11,6 +11,7 @@ public final class Bullet {
     public int pierce;
     public int bounce;
     public float explosion;
+    public float slow;
     public int burn;
     public float knockback;
     public int color;
