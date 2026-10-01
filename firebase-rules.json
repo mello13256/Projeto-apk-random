@@ -4,30 +4,30 @@
     ".write": false,
     "ranking": {
       "$diff": {
-        ".read": "$diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3'",
+        ".read": "$diff.matches(/^d[0-5]$/)",
         ".indexOn": [
           "score"
         ],
         "$id": {
-          ".write": "($diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3') && !data.exists() && newData.exists()",
+          ".write": "$diff.matches(/^d[0-5]$/) && !data.exists() && newData.exists()",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
           },
           "character": {
-            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8"
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 14"
           },
           "wave": {
-            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 20"
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999 && (newData.val() <= 20 || ($diff === 'd4' && newData.val() <= 35) || $diff === 'd5')"
           },
           "won": {
-            ".validate": "newData.isBoolean() && (newData.val() === false || newData.parent().child('wave').val() === 20)"
+            ".validate": "newData.isBoolean() && (newData.val() === false || ($diff.matches(/^d[0-3]$/) && newData.parent().child('wave').val() === 20) || ($diff === 'd4' && newData.parent().child('wave').val() === 35))"
           },
           "kills": {
-            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000"
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
           },
           "level": {
-            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 300"
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 999"
           },
           "platform": {
             ".validate": "newData.val() === 'web' || newData.val() === 'android'"
@@ -71,6 +71,9 @@
             },
             "$other": {
               ".validate": false
+            },
+            "mode": {
+              ".validate": "newData.val() === 'coop' || newData.val() === 'pvp'"
             }
           },
           "roster": {
@@ -93,6 +96,9 @@
               },
               "$other": {
                 ".validate": false
+              },
+              "p": {
+                ".validate": "newData.isString() && newData.val().length <= 20"
               }
             }
           },
@@ -102,7 +108,7 @@
             }
           },
           "start": {
-            ".validate": "newData.isString() && newData.val().length <= 3000"
+            ".validate": "newData.isString() && newData.val().length <= 4000"
           },
           "snap": {
             ".validate": "newData.isString() && newData.val().length <= 60000"
@@ -114,6 +120,9 @@
           },
           "$other": {
             ".validate": false
+          },
+          "duel": {
+            ".validate": "newData.isString() && newData.val().length <= 60000"
           }
         },
         "g": {
@@ -135,15 +144,98 @@
               ".validate": "newData.isString() && newData.val().length <= 20000"
             },
             "in": {
-              ".validate": "newData.isString() && newData.val().length <= 400"
+              ".validate": "newData.isString() && newData.val().length <= 500"
             },
             "rd": {
-              ".validate": "newData.isString() && newData.val().length <= 8000"
+              ".validate": "newData.isString() && newData.val().length <= 12000"
             },
             "$other": {
               ".validate": false
+            },
+            "pv": {
+              ".validate": "newData.isString() && newData.val().length <= 20"
             }
           }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "users": {
+      "$u": {
+        ".read": true,
+        ".write": "!data.exists() && newData.exists()",
+        ".validate": "$u.matches(/^[a-z0-9_]{3,16}$/) && newData.hasChildren(['n', 'c'])",
+        "n": {
+          ".validate": "newData.isString() && newData.val().toLowerCase() === $u"
+        },
+        "c": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "saves": {
+      "$k": {
+        ".read": true,
+        ".write": "$k.matches(/^[0-9a-f]{64}$/)",
+        ".validate": "newData.hasChildren(['p', 'u', 'n'])",
+        "p": {
+          ".validate": "newData.isString() && newData.val().length <= 30000"
+        },
+        "u": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
+        },
+        "n": {
+          ".validate": "newData.isString() && newData.val().length <= 16"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "polls": {
+      ".read": true
+    },
+    "votes": {
+      "$poll": {
+        ".read": true,
+        "$voter": {
+          ".write": "$poll.matches(/^[a-z0-9_]{2,40}$/) && $voter.matches(/^[a-z0-9]{8,40}$/)",
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 9"
+        }
+      }
+    },
+    "reports": {
+      "$id": {
+        ".write": "!data.exists() && newData.exists()",
+        ".validate": "newData.hasChildren(['t', 'm', 'v', 'pf', 'ts'])",
+        "t": {
+          ".validate": "newData.val() === 'bug' || newData.val() === 'ideia'"
+        },
+        "m": {
+          ".validate": "newData.isString() && newData.val().length >= 5 && newData.val().length <= 1000"
+        },
+        "n": {
+          ".validate": "newData.isString() && newData.val().length <= 16"
+        },
+        "v": {
+          ".validate": "newData.isString() && newData.val().length <= 10"
+        },
+        "pf": {
+          ".validate": "newData.isString() && newData.val().length <= 10"
+        },
+        "ctx": {
+          ".validate": "newData.isString() && newData.val().length <= 300"
+        },
+        "ua": {
+          ".validate": "newData.isString() && newData.val().length <= 200"
+        },
+        "ts": {
+          ".validate": "newData.isNumber() && newData.val() <= now"
         },
         "$other": {
           ".validate": false

@@ -1,6 +1,7 @@
 // Simulador: o robô joga sozinho para testar a lógica.
-// Uso: node pwa/sim.js [partidas] [dificuldade]        (modo solo)
+// Uso: node pwa/sim.js [partidas] [dificuldade]        (modo solo; dificuldades 0 a 5)
 //      node pwa/sim.js coop [partidas] [jogadores]       (multiplayer, tudo num computador só)
+//      node pwa/sim.js duel [duelos]                      (PvP: 15 rodadas de preparação + duelo)
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -33,6 +34,15 @@ function bot(g, p) {
     fx += dx / Math.sqrt(d2) * w; fy += dy / Math.sqrt(d2) * w;
   }
   fx += (WORLD_W / 2 - p.x) / 900; fy += (WORLD_H / 2 - p.y) / 900;
+  // Cyborg: mira manual no inseto mais perto e atira se estiver no alcance
+  if (p.kind === 'laser') {
+    const st = g.laserStats(p);
+    if (nearest) {
+      p.aimAng = Math.atan2(nearest.y - p.y, nearest.x - p.x);
+      p.wantFire = nearestD < st.range + 20;
+    } else p.wantFire = false;
+    if (p === g.player) g.input = { aimAng: p.aimAng, fire: p.wantFire };
+  }
   return [fx, fy];
 }
 
@@ -136,7 +146,9 @@ function runCoop(runs, n, diff) {
   console.log('Coop x' + n + ' ' + DIFF_NAMES[diff].padEnd(9) + ' vitorias: ' + wins + '/' + runs + '  onda media: ' + (total / runs).toFixed(1) + '  quedas: ' + downs + '  (' + transfers + ' trocas de dados)');
 }
 `);
-if (process.argv[2] === 'coop') {
+if (process.argv[2] === 'duel') {
+  // abaixo
+} else if (process.argv[2] === 'coop') {
   const runs = Number(process.argv[3] || 6);
   const ns = process.argv[4] !== undefined ? [Number(process.argv[4])] : [2, 3, 4];
   const diffs = process.argv[5] !== undefined ? [Number(process.argv[5])] : [1, 3];
@@ -145,4 +157,65 @@ if (process.argv[2] === 'coop') {
   const runs = Number(process.argv[2] || 12);
   const diffs = process.argv[3] !== undefined ? [Number(process.argv[3])] : [0, 1, 2, 3];
   for (const d of diffs) runSim(runs, d);
+}
+
+// PvP: node pwa/sim.js duel [duelos]  -> cada robô faz as 15 rodadas e depois eles duelam
+if (process.argv[2] === 'duel') {
+  vm.runInThisContext(`
+  (function (runs) {
+    let total = 0, longest = 0, shortest = 1e9, draws = 0;
+    const wins = {};
+    for (let r = 0; r < runs; r++) {
+      const pick = makeRng(9000 + r);
+      const datas = [];
+      const chars = [(r * 2) % CHARS.length, (r * 5 + 3) % CHARS.length];
+      for (const ci of chars) {
+        const g = new Game(300 + r * 7 + ci);
+        g.newPvpPrep(CHARS[ci], 1);
+        let guard = 0;
+        while (!(g.state === 'SHOP' && g.prepFinished()) && guard++ < 2e6) {
+          if (g.state === 'PLAYING') { const j = bot(g, g.player); g.update(1 / 60, j[0], j[1]); }
+          else { botBreak(g, pick, null); if (!g.prepFinished()) g.nextWave(); }
+        }
+        if (g.state !== 'SHOP') { botBreak(g, pick, null); }
+        datas.push(JSON.parse(JSON.stringify(playerToData(g.player))));
+      }
+      // troca de 2 atributos
+      const a = Stat.SPEED, b = Stat.ARMOR;
+      const t0 = [datas[0].stats[a], datas[0].stats[b]];
+      datas[0].stats[a] = datas[1].stats[a]; datas[0].stats[b] = datas[1].stats[b];
+      datas[1].stats[a] = t0[0]; datas[1].stats[b] = t0[1];
+      const d = new Game(77 + r);
+      d.newDuel(datas.map((x, i) => ({ id: 'p' + i, name: 'Bot' + i, data: x })), 'nobody', 1);
+      let guard = 0;
+      while (d.state === 'PLAYING' && guard++ < 60 * 400) {
+        for (const p of d.players) {
+          if (!p.alive) continue;
+          const foe = d.players.find((q) => q !== p && q.alive);
+          let fx = 0, fy = 0;
+          if (foe) {
+            const dx = foe.x - p.x, dy = foe.y - p.y, dist = Math.hypot(dx, dy) + 0.1;
+            const want = p.weapons[0].def.laser ? 300 : p.weapons[0].range(p) * 0.7;
+            const s = dist > want ? 1 : -0.6;
+            fx = dx / dist * s + Math.sin(guard / 40 + p.slot) * 0.6; fy = dy / dist * s + Math.cos(guard / 50 + p.slot) * 0.6;
+            p.aimAng = Math.atan2(dy, dx); p.wantFire = dist < 520;
+          }
+          const z = d.zone; const zd = Math.hypot(p.x - z.x, p.y - z.y);
+          if (zd > z.r * 0.8) { fx += (z.x - p.x) / zd * 2; fy += (z.y - p.y) / zd * 2; }
+          const len = Math.hypot(fx, fy), k = len > 1 ? 1 / len : 1;
+          p.tx = clamp(p.tx + fx * k * p.speed() / 60, p.radius, WORLD_W - p.radius);
+          p.ty = clamp(p.ty + fy * k * p.speed() / 60, p.radius, WORLD_H - p.radius);
+          p.moving = len > 0.1;
+        }
+        d.update(1 / 60, 0, 0);
+      }
+      const t = d.duelTime;
+      total += t; longest = Math.max(longest, t); shortest = Math.min(shortest, t);
+      const w = d.players.find((p) => p.id === d.duelWinner);
+      if (!w) draws++; else wins[w.character.name] = (wins[w.character.name] || 0) + 1;
+      console.log('duelo ' + (r + 1) + ': ' + d.players.map((p) => p.character.name + ' (vida ' + p.maxHp() + ')').join(' x ') + ' -> ' + (w ? w.character.name : 'empate') + ' em ' + t.toFixed(1) + ' s' + (d.state === 'PLAYING' ? ' (NÃO ACABOU)' : ''));
+    }
+    console.log('tempo médio: ' + (total / runs).toFixed(1) + ' s (de ' + shortest.toFixed(1) + ' a ' + longest.toFixed(1) + ')  empates: ' + draws);
+  })(${Number(process.argv[3] || 6)});
+  `);
 }

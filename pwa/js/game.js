@@ -2,9 +2,13 @@
 'use strict';
 
 const WORLD_W = 1800, WORLD_H = 1200;
-const MAX_WAVE = 20;
+const MAX_WAVE = 20;          // ondas no modo normal (Inferno: 35, Infinito: sem fim)
 const START_MATERIALS = 30;
-const MAX_WEAPONS = 6;
+const MAX_WEAPONS = 6;        // o Alien Hala segura 8
+const PVP_PREP_WAVES = 15;    // rodadas de preparação do PvP
+const DUEL_DMG = 0.1;         // no duelo, o dano entre jogadores é reduzido (senão acaba num piscar)
+const DUEL_HP = 5;            // e todo mundo tem 5x mais vida
+const LASER_FIRE_TIME = 5;    // segundos de tiro contínuo até superaquecer
 const BUY_OK = 0, BUY_NO_MONEY = 1, BUY_FULL = 2, BUY_EMPTY = 3;
 const SHOP_SLOTS = 4;
 const ITEM_BASE_PRICE = [18, 40, 75, 120];
@@ -79,6 +83,14 @@ class Player {
     this.remote = false;        // controlado por outro computador (a posição chega pela rede)
     this.tx = 0; this.ty = 0;   // última posição recebida pela rede
     this.shots = 0; this.lastHarvest = 0;
+    this.peakLs = 0;            // maior roubo de vida que teve na partida (desbloqueia o Vampiro)
+    // Canhão laser (Cyborg Cebola): mira e tiro manuais
+    this.cy = { dmg: 0, cool: 0, time: 0, width: 0, range: 0, split: 0, boom: 0, crit: 0 };
+    this.aimAng = 0; this.wantFire = false;
+    this.laser = { heat: 0, over: false, on: false, tick: 0 };
+    this.mineTimer = 0; this.minionAng = 0; this.minionCd = [];
+    // "armas" invisíveis para contar o dano das minas, dos mirtilinhos e do atropelamento
+    this.extraSrc = { waveDamage: 0, totalDamage: 0, owner: this, def: null };
     this.stats = new Array(Stat.COUNT).fill(0);
     this.stats[Stat.HP] = 10;
     for (let i = 0; i < c.mods.length; i += 2) this.stats[c.mods[i]] += c.mods[i + 1];
@@ -91,8 +103,13 @@ class Player {
     this.iframes = 0; this.regenAcc = 0;
     this.facingLeft = false; this.moveAnim = 0; this.lookX = 1; this.lookY = 0; this.moving = false;
     this.level = 1; this.xp = 0; this.materials = 0;
+    this.notePeaks();
   }
-  maxHp() { return Math.max(1, this.stats[Stat.HP]); }
+  get kind() { return this.character.kind; }
+  maxWeapons() { return this.kind === 'alien' ? 8 : MAX_WEAPONS; }
+  notePeaks() { this.peakLs = Math.max(this.peakLs, this.stats[Stat.LIFESTEAL]); }
+  addCy(it) { if (it.cy) for (const k of Object.keys(it.cy)) this.cy[k] += it.cy[k]; }
+  maxHp() { return Math.max(1, this.stats[Stat.HP]) * (this.hpMult || 1); }
   speed() { return 240 * Math.max(0.3, 1 + this.stats[Stat.SPEED] / 100); }
   damageMult() { return Math.max(0.1, 1 + this.stats[Stat.DAMAGE] / 100); }
   dodgeChance() { return Math.min(60, Math.max(0, this.stats[Stat.DODGE])); }
@@ -106,7 +123,9 @@ class Player {
     this.items.push(it);
     for (let m = 0; m < it.mods.length; m += 2) this.stats[it.mods[m]] += it.mods[m + 1];
     if (it.special >= 0) this.specials[it.special] += it.specialValue;
+    this.addCy(it);
     this.hp = Math.min(this.maxHp(), Math.max(this.hp, 1));
+    this.notePeaks();
   }
   heal(v) { this.hp = Math.min(this.maxHp(), this.hp + v); }
 }
@@ -133,14 +152,22 @@ function rollTier(rng, wave, luck) {
 
 function varied(rng, price) { return Math.max(1, Math.round(price * (0.9 + rng.float() * 0.2))); }
 
+/** Itens que este personagem encontra (o Alien só acha os Alien; o Cyborg também acha os dele). */
+function itemPool(p, tier) {
+  if (p.kind === 'alien') return ALIEN_ITEMS.filter((it) => it.tier === tier);
+  const pool = ITEMS.filter((it) => it.tier === tier);
+  if (p.kind === 'laser') for (const it of CYBORG_ITEMS) if (it.tier === tier) pool.push(it, it, it);
+  return pool;
+}
+
 function randomOffer(rng, p, wave) {
   const o = { weapon: null, item: null, tier: rollTier(rng, wave, p.stats[Stat.LUCK]), price: 0, locked: false };
-  if (rng.float() < 0.35) {
+  if (p.kind !== 'laser' && rng.float() < 0.35) { // o Cyborg só usa o canhão: nada de armas na loja
     if (p.weapons.length && rng.float() < 0.35) o.weapon = p.weapons[rng.int(p.weapons.length)].def;
     else o.weapon = WEAPONS[rng.int(WEAPONS.length)];
     o.price = varied(rng, weaponPrice(o.weapon, o.tier, wave));
   } else {
-    const pool = ITEMS.filter((it) => it.tier === o.tier);
+    const pool = itemPool(p, o.tier);
     o.item = pool[rng.int(pool.length)];
     o.price = varied(rng, itemPrice(o.item, wave));
   }
@@ -166,7 +193,14 @@ class Game {
     this.paused = false;
     this.player = null;   // o jogador deste computador
     this.players = [];    // todos os jogadores (no modo solo, só um)
-    this.coop = false;    // partida multiplayer
+    this.coop = false;    // partida multiplayer (não pausa, não salva)
+    this.pvp = '';        // PvP: 'prep' (as 15 rodadas de preparação) ou 'duel' (a arena)
+    this.zone = null;     // duelo: círculo que vai fechando
+    this.duelTime = 0; this.countdown = 0; this.duelWinner = null; this.zoneTick = 0;
+    this.mines = [];
+    this.input = { aimAng: 0, fire: false }; // mira manual do jogador deste computador (laser)
+    this.seedsCollected = 0; // sementes ganhas na partida (recordes)
+    this.prepDowned = false;
     this.rec = null;      // quando é uma lista, guarda efeitos/sons para mandar pela rede
     this.onWaveEnd = null;
     this.nextEnemyId = 1;
@@ -212,17 +246,53 @@ class Game {
     if (this.rec) this.rec.push(['k', v, p ? p.id : '']);
   }
 
+  /** Última onda da partida (Infinity no modo Infinito). */
+  maxWave() {
+    if (this.pvp === 'prep') return PVP_PREP_WAVES;
+    return DIFF_WAVES[this.difficulty] || Infinity;
+  }
+  isFinalWave(n) { return n === this.maxWave(); }
+
+  /** Chefe que aparece no começo da onda n (ou null). */
+  bossFor(n) {
+    if (this.difficulty === DIFF_ENDLESS && this.pvp !== 'prep') return n % 10 === 0 ? BOSSES[(n / 10 - 1) % 3] : null;
+    if (this.difficulty === DIFF_INFERNO && this.pvp !== 'prep') {
+      return n === 10 ? E.LESMA_RAINHA : n === 20 || n === 30 ? E.FORMIGA_IMPERATRIZ : n === 35 ? E.BESOURO_INFERNAL : null;
+    }
+    return n === 10 ? E.LESMA_RAINHA : n === MAX_WAVE && this.pvp !== 'prep' ? E.FORMIGA_IMPERATRIZ : null;
+  }
+
+  waveBanner(n) {
+    if (this.isFinalWave(n) && this.bossFor(n)) return 'ONDA FINAL - CHEFONA!';
+    if (this.bossFor(n)) return 'ONDA ' + n + ' - CHEFÃO!';
+    if (this.isFinalWave(n)) return this.pvp === 'prep' ? 'ÚLTIMA RODADA!' : 'ONDA FINAL!';
+    return (this.pvp === 'prep' ? 'RODADA ' : 'ONDA ') + n;
+  }
+
   // --- Fluxo ---
+
+  resetRunStats() {
+    this.kills = 0; this.seedsCollected = 0;
+    this.offers.fill(null);
+    this.paused = false;
+    this.mines = [];
+    this.zone = null; this.duelWinner = null;
+  }
 
   newRun(c, diff) {
     if (diff !== undefined) this.difficulty = clamp(diff, 0, DIFF_NAMES.length - 1);
-    this.coop = false;
+    this.coop = false; this.pvp = '';
     this.player = new Player(c);
     this.player.materials = START_MATERIALS;
     this.players = [this.player];
-    this.kills = 0;
-    this.offers.fill(null);
-    this.paused = false;
+    this.resetRunStats();
+    this.startWave(1);
+  }
+
+  /** PvP: as 15 rodadas de preparação (cada um joga sozinho no próprio aparelho). */
+  newPvpPrep(c, diff) {
+    this.newRun(c, diff);
+    this.coop = true; this.pvp = 'prep';
     this.startWave(1);
   }
 
@@ -237,16 +307,52 @@ class Game {
       return p;
     });
     this.player = this.players.find((p) => !p.remote) || this.players[0];
-    this.kills = 0;
-    this.offers.fill(null);
-    this.paused = false;
+    this.pvp = '';
+    this.resetRunStats();
     this.startWave(1);
+  }
+
+  /**
+   * PvP: a arena do duelo. list = [{id, name, data}] (data = jogador já com a troca de atributos).
+   * Sem insetos; o círculo vai fechando e quem fica fora perde vida.
+   */
+  newDuel(list, localId, diff) {
+    if (diff !== undefined) this.difficulty = diff;
+    this.coop = true; this.pvp = 'duel';
+    this.players = list.map((d, i) => {
+      const p = playerFromData(d.data, d.id, d.name, i) || new Player(CHARS[0], d.id, d.name, i);
+      p.remote = d.id !== localId;
+      p.hpMult = DUEL_HP;
+      return p;
+    });
+    this.player = this.players.find((p) => !p.remote) || this.players[0];
+    this.resetRunStats();
+    this.wave = PVP_PREP_WAVES;
+    this.waveTime = 0; this.waveDuration = 9999;
+    this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
+    this.pickups = []; this.particles = []; this.texts = [];
+    this.boss = null; this.ending = false;
+    this.zone = { x: WORLD_W / 2, y: WORLD_H / 2, r: 760, min: 120 };
+    this.duelTime = 0; this.countdown = 3; this.zoneTick = 0;
+    const n = this.players.length;
+    this.players.forEach((p, i) => {
+      const a = Math.PI * 2 * i / n + Math.PI;
+      p.x = this.zone.x + Math.cos(a) * 430; p.y = this.zone.y + Math.sin(a) * 330;
+      p.tx = p.x; p.ty = p.y; p.alive = true; p.hp = p.maxHp(); p.iframes = 0; p.regenAcc = 0;
+      p.facingLeft = Math.cos(a) > 0;
+      for (const w of p.weapons) { w.cd = 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
+    });
+    this.showBanner('DUELO!');
+    this.state = 'PLAYING';
   }
 
   startWave(n) {
     this.wave = n;
     this.waveTime = 0;
-    this.waveDuration = n === MAX_WAVE ? 90 : Math.min(60, 20 + (n - 1) * 5);
+    this.waveDuration = this.isFinalWave(n) && this.pvp !== 'prep' ? 90 : Math.min(60, 20 + (n - 1) * 5);
+    if (this.pvp === 'prep') this.waveDuration = Math.round(this.waveDuration * 0.75);
+    this.mines = [];
+    this.prepDowned = false;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.pickups = []; this.particles = []; this.texts = [];
     this.boss = null;
@@ -261,14 +367,16 @@ class Game {
       p.tx = p.x; p.ty = p.y;
       p.alive = true;
       p.hp = p.maxHp(); p.iframes = 1; p.regenAcc = 0;
+      p.laser.heat = 0; p.laser.over = false; p.laser.on = false;
       for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
     });
     this.spawnTimer = 0.6;
-    if (n === 10 || n === MAX_WAVE) {
+    const boss = this.bossFor(n);
+    if (boss) {
       const pos = this.randomSpawnPos(450);
-      this.telegraphs.push({ def: n === 10 ? E.LESMA_RAINHA : E.FORMIGA_IMPERATRIZ, x: pos[0], y: pos[1], time: 2 });
+      this.telegraphs.push({ def: boss, x: pos[0], y: pos[1], time: 2 });
     }
-    this.showBanner(waveBanner(n));
+    this.showBanner(this.waveBanner(n));
     this.state = 'PLAYING';
   }
 
@@ -282,19 +390,35 @@ class Game {
       p.lastHarvest = Math.max(0, p.stats[Stat.HARVEST]);
       const gain = collected + p.lastHarvest;
       p.materials += gain;
+      if (p === this.player) this.seedsCollected += gain;
       this.addXp(p, gain);
+      p.notePeaks();
     }
     this.lastHarvest = this.player.lastHarvest;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = []; this.pickups = [];
     this.boss = null;
     this.ending = false;
     if (this.onWaveEnd) this.onWaveEnd();
-    if (this.wave >= MAX_WAVE) {
+    if (this.wave >= this.maxWave() && this.pvp !== 'prep') {
       this.state = 'VICTORY';
       this.fx.runEnded(true, this.wave);
       return;
     }
     this.enterBetweenWaves();
+  }
+
+  /** PvP: terminou as 15 rodadas (a loja mostra "Ir pro duelo"). */
+  prepFinished() { return this.pvp === 'prep' && this.wave >= PVP_PREP_WAVES; }
+
+  /** Dados da partida para os recordes e desbloqueios (chamado no fim). */
+  runInfo(won) {
+    const p = this.player;
+    const full = p.weapons.length >= p.maxWeapons() && p.weapons.every((w) => w.tier >= 3);
+    return {
+      won, wave: this.wave, kills: this.kills, seeds: this.seedsCollected, diff: this.difficulty,
+      vamp: won && p.peakLs >= 50,
+      alien: won && full && p.stats[Stat.RANGE] > 100,
+    };
   }
 
   /** Começa o intervalo entre ondas do jogador deste computador: melhorias, caixas e loja. */
@@ -326,7 +450,7 @@ class Game {
     this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.boss = null;
     for (const pk of this.pickups) pk.attracted = true;
-    this.showBanner('ONDA CONCLUÍDA!');
+    this.showBanner(this.prepDowned ? 'VOCÊ CAIU! FIM DA RODADA' : this.pvp === 'prep' ? 'RODADA CONCLUÍDA!' : 'ONDA CONCLUÍDA!');
     this.snd('WAVE_END');
   }
 
@@ -365,7 +489,7 @@ class Game {
   openCrate() {
     this.state = 'CRATE';
     const tier = rollTier(this.rng, this.wave + 3, this.player.stats[Stat.LUCK]);
-    const pool = ITEMS.filter((it) => it.tier === tier);
+    const pool = itemPool(this.player, tier);
     this.crateItem = pool[this.rng.int(pool.length)];
   }
 
@@ -389,7 +513,23 @@ class Game {
     p.alive = false;
     p.hp = 0;
     p.iframes = 0;
+    p.laser.on = false;
     for (const w of p.weapons) w.attackT = -1;
+    if (this.pvp === 'prep') {
+      // PvP: cair na preparação só acaba a rodada (as sementes no chão se perdem)
+      this.prepDowned = true;
+      this.pickups = [];
+      this.burst(p.x, p.y, 24, '255,90,74', 220, 7, 0.6);
+      this.snd('HURT'); this.vib(300);
+      this.beginEnding();
+      return;
+    }
+    if (this.pvp === 'duel') {
+      this.burst(p.x, p.y, 40, '255,90,74', 300, 8, 0.8);
+      this.addText(p.x, p.y - 50, (p === this.player ? 'Você' : p.name) + ' perdeu!', '#FF8A7A', 32);
+      this.snd('HURT', p); this.vib(300, p); this.shakeAt(10);
+      return;
+    }
     if (this.players.length > 1) {
       this.burst(p.x, p.y, 24, '255,90,74', 220, 7, 0.6);
       this.addText(p.x, p.y - 50, (p === this.player ? 'Você' : p.name) + ' caiu!', '#FF8A7A', 30);
@@ -450,6 +590,7 @@ class Game {
     const p = this.player;
     const [stat, amount] = this.levelChoices[i];
     p.stats[stat] += amount;
+    p.notePeaks();
     if (stat === Stat.HP) p.hp += amount;
     p.hp = Math.min(p.hp, p.maxHp());
     p.levelsPending--;
@@ -500,7 +641,7 @@ class Game {
     const o = this.offers[i];
     if (!o) return BUY_EMPTY;
     if (this.player.materials < o.price) return BUY_NO_MONEY;
-    if (o.weapon && this.player.weapons.length >= MAX_WEAPONS && this.findMergeTarget(o.weapon, o.tier, -1) < 0) return BUY_FULL;
+    if (o.weapon && this.player.weapons.length >= this.player.maxWeapons() && this.findMergeTarget(o.weapon, o.tier, -1) < 0) return BUY_FULL;
     return BUY_OK;
   }
 
@@ -510,7 +651,7 @@ class Game {
     const o = this.offers[i];
     const p = this.player;
     if (o.weapon) {
-      if (p.weapons.length < MAX_WEAPONS) p.weapons.push(new Weapon(o.weapon, o.tier));
+      if (p.weapons.length < p.maxWeapons()) p.weapons.push(new Weapon(o.weapon, o.tier));
       else p.weapons[this.findMergeTarget(o.weapon, o.tier, -1)].tier++;
     } else {
       p.addItem(o.item);
@@ -562,8 +703,13 @@ class Game {
     if (this.bannerTime > 0) this.bannerTime -= dt;
     if (this.state !== 'PLAYING' || this.paused) return;
     this.shake = Math.max(0, this.shake - dt * 25);
+    const me = this.player;
+    if (me && !me.remote) { me.aimAng = this.input.aimAng; me.wantFire = !!this.input.fire; }
+    if (this.pvp === 'duel') { this.updateDuel(dt, jx, jy); return; }
     if (this.ending) {
       this.updatePlayer(dt, jx, jy);
+      this.updateWeapons(dt, true); // as armas acompanham o legume (antes ficavam paradas pra trás)
+      for (const p of this.players) { p.laser.on = false; if (p.kind === 'minions') p.minionAng += dt * 1.8; }
       this.updatePickups(dt);
       this.updateEffects(dt);
       this.cleanup();
@@ -577,14 +723,266 @@ class Game {
     this.updateEnemies(dt);
     this.separateEnemies();
     this.updateWeapons(dt);
+    this.updateAbilities(dt);
     this.updateBullets(dt);
     this.updateEnemyBullets(dt);
     this.updatePickups(dt);
     this.updateEffects(dt);
     this.cleanup();
     for (const p of this.players) if (p.alive && p.hp <= 0) this.playerDown(p);
+    if (this.ending) return; // PvP: cair na preparação já encerrou a rodada
     if (!this.players.some((p) => p.alive)) { this.gameOver(); return; }
     if (this.waveTime >= this.waveDuration) this.beginEnding();
+  }
+
+  // --- Duelo (PvP) ---
+
+  updateDuel(dt, jx, jy) {
+    this.updatePlayer(dt, jx, jy);
+    if (this.countdown > 0) {
+      this.countdown -= dt;
+      this.updateWeapons(dt, true);
+      this.updateEffects(dt);
+      if (this.countdown <= 0) { this.showBanner('LUTEM!'); this.snd('LEVEL_UP'); }
+      return;
+    }
+    this.duelTime += dt;
+    this.waveTime = this.duelTime;
+    const z = this.zone;
+    z.r = Math.max(z.min, 760 - this.duelTime * 8);
+    this.zoneTick -= dt;
+    if (this.zoneTick <= 0) {
+      this.zoneTick = 0.5;
+      const dmg = 2 + Math.floor(this.duelTime / 12);
+      for (const p of this.players) {
+        if (!p.alive || Math.hypot(p.x - z.x, p.y - z.y) <= z.r) continue;
+        p.hp -= dmg;
+        this.addText(p.x, p.y - 40, '-' + dmg, '#FF5A2A', 26);
+        this.snd('HURT', p);
+      }
+    }
+    this.updateWeapons(dt);
+    this.updateAbilities(dt);
+    this.updateBullets(dt);
+    this.updateEffects(dt);
+    this.cleanup();
+    for (const p of this.players) if (p.alive && p.hp <= 0) this.playerDown(p);
+    const alive = this.players.filter((p) => p.alive);
+    if (alive.length <= 1) {
+      this.duelWinner = alive.length ? alive[0].id : '';
+      this.state = 'DUEL_END';
+      this.snd(alive[0] === this.player ? 'LEVEL_UP' : 'HURT');
+    }
+  }
+
+  /** Inimigos de um jogador: os insetos, ou (no duelo) os outros jogadores. */
+  foesOf(p) {
+    if (this.pvp === 'duel') return this.players.filter((q) => q !== p && q.alive);
+    return this.enemies;
+  }
+
+  /** Alvo mais perto para as armas de "owner". */
+  nearestFoe(owner, x, y, range, exclude) {
+    if (this.pvp !== 'duel') return this.nearestEnemy(x, y, range, exclude);
+    let best = null, bestD = Infinity;
+    for (const q of this.players) {
+      if (q === owner || !q.alive || (exclude && exclude.includes(q))) continue;
+      const d = Math.hypot(q.x - x, q.y - y) - q.radius;
+      if (d < range && d < bestD) { bestD = d; best = q; }
+    }
+    return best;
+  }
+
+  /** Acerta um inseto ou (no duelo) outro jogador. */
+  hitFoe(t, dmg, crit, kx, ky, kb, burn, color, src, owner) {
+    if (t instanceof Player) this.hitPlayer(t, dmg, crit, kx, ky, kb, src, owner || (src && src.owner));
+    else this.damageEnemy(t, dmg, crit, kx, ky, kb, burn, color, src, owner);
+  }
+
+  /** Dano de um jogador em outro (duelo): reduzido, com armadura e esquiva. */
+  hitPlayer(q, dmg, crit, kx, ky, kb, src, owner) {
+    if (!q.alive || q.iframes > 0) return;
+    const real = Math.max(1, Math.round(dmg * DUEL_DMG));
+    const before = q.hp;
+    this.damagePlayer(q, real, null, 0.22);
+    const done = before - q.hp;
+    if (src && done > 0) { src.waveDamage += done; src.totalDamage += done; }
+    if (!q.remote && kb > 0 && done > 0) {
+      q.x = clamp(q.x + kx * kb * 0.8, q.radius, WORLD_W - q.radius);
+      q.y = clamp(q.y + ky * kb * 0.8, q.radius, WORLD_H - q.radius);
+    }
+    if (owner && done > 0) this.tryLifesteal(owner, src);
+  }
+
+  tryLifesteal(p, src) {
+    let ls = p.stats[Stat.LIFESTEAL];
+    if (p.kind === 'vampire' && src && src.def && src.def.type === MELEE) ls += 30; // Vampiro Kiwi
+    if (p.alive && ls > 0 && p.hp < p.maxHp() && this.rng.int(100) < ls) p.heal(1);
+  }
+
+  // --- Habilidades das classes ---
+
+  updateAbilities(dt) {
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const k = p.kind;
+      if (k === 'laser') this.updateLaser(p, dt);
+      else if (k === 'mines') this.updateMineDrop(p, dt);
+      else if (k === 'minions') this.updateMinions(p, dt);
+      else if (k === 'ram') this.updateRam(p, dt);
+    }
+    if (this.mines.length) this.updateMines(dt);
+  }
+
+  atkFactor(p) { return Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100); }
+
+  /** Números do canhão laser do Cyborg Cebola. */
+  laserStats(p) {
+    const cy = p.cy;
+    return {
+      dps: (W_LASER.baseDamage + p.stats[Stat.RANGED] * 2 + p.stats[Stat.ELEMENTAL] * 1.5)
+        * p.damageMult() * (1 + cy.dmg / 100) * (1 + 0.07 * (p.level - 1)) * this.atkFactor(p),
+      range: Math.max(150, W_LASER.range + p.stats[Stat.RANGE] + cy.range),
+      width: 14 + cy.width,
+      fireTime: LASER_FIRE_TIME * (1 + cy.time / 100),
+      cool: 1 + cy.cool / 100,
+      crit: p.stats[Stat.CRIT] + cy.crit,
+    };
+  }
+
+  updateLaser(p, dt) {
+    const L = p.laser, st = this.laserStats(p);
+    const can = !this.ending && !(this.pvp === 'duel' && this.countdown > 0);
+    if (L.over) {
+      // superaquecido: o tempo pra esfriar é proporcional ao tempo de tiro (80% dele)
+      L.on = false;
+      L.heat -= dt / (st.fireTime * 0.8) * st.cool;
+      if (L.heat <= 0) { L.heat = 0; L.over = false; this.snd('PICKUP', p); }
+    } else if (p.wantFire && can) {
+      L.on = true;
+      L.heat += dt / st.fireTime;
+      if (L.heat >= 1) {
+        L.heat = 1; L.over = true; L.on = false;
+        this.addText(p.x, p.y - 56, 'SUPERAQUECEU!', '#FF6A3A', 28);
+        this.snd('ERROR', p);
+        this.burst(p.x + Math.cos(p.aimAng) * 34, p.y + Math.sin(p.aimAng) * 34, 16, '200,200,200', 120, 7, 0.8);
+        if (p.cy.boom > 0) this.explodeAt(p.x, p.y, 170 + p.cy.boom * 30, st.dps * 1.4 * p.cy.boom, false, 30, 0, p.weapons[0], p);
+      }
+    } else {
+      L.on = false;
+      L.heat = Math.max(0, L.heat - dt / 2.5 * st.cool);
+    }
+    if (!L.on) { L.tick = 0; return; }
+    L.tick -= dt;
+    if (L.tick > 0) return;
+    L.tick += 0.1;
+    L.n = (L.n || 0) + 1;
+    const w = p.weapons[0];
+    this.fireLaser(p, p.aimAng, st, 1, w);
+    for (let k = 1; k <= p.cy.split; k++) {
+      this.fireLaser(p, p.aimAng + 0.22 * k, st, 0.4, w);
+      this.fireLaser(p, p.aimAng - 0.22 * k, st, 0.4, w);
+    }
+    p.shots++;
+    if (p === this.player && L.n % 2 === 0) this.fx.sound('SHOOT');
+  }
+
+  /** Um "tique" do feixe (10 por segundo): acerta tudo que estiver na linha. */
+  fireLaser(p, ang, st, mult, w) {
+    const c = Math.cos(ang), s = Math.sin(ang);
+    const x0 = p.x + c * 30, y0 = p.y + s * 30 + 4, len = st.range * (mult < 1 ? 0.8 : 1);
+    const quiet = p.laser.n % 3 !== 0; // número de dano só a cada 3 tiques (senão vira bagunça)
+    for (const f of this.foesOf(p)) {
+      if (f.dead) continue;
+      const dx = f.x - x0, dy = f.y - y0;
+      const t = clamp(dx * c + dy * s, 0, len);
+      const px = x0 + c * t - f.x, py = y0 + s * t - f.y;
+      const r = f.radius + st.width / 2;
+      if (px * px + py * py >= r * r) continue;
+      const crit = this.rng.int(100) < st.crit;
+      const dmg = st.dps * 0.1 * mult * (crit ? 2 : 1);
+      this.hitFoe(f, dmg, crit, c, s, W_LASER.knockback, 0, quiet ? 'none' : crit ? '#FFE14A' : '#FF9AA8', w, p);
+      if (!quiet && this.particles.length < 400) this.burst(f.x - c * f.radius, f.y - s * f.radius, 2, '255,90,110', 120, 4, 0.2);
+    }
+  }
+
+  /** Melancia Minadora: planta minas enquanto anda. */
+  updateMineDrop(p, dt) {
+    p.mineTimer -= dt;
+    if (p.mineTimer > 0 || !p.moving || this.ending) return;
+    const max = 5 + Math.floor(p.level / 4);
+    if (this.mines.filter((m) => m.owner === p).length >= max) return;
+    this.mines.push({ x: p.x, y: p.y + 12, owner: p, arm: 0.7, t: 0, dead: false });
+    p.mineTimer = 1.4 / this.atkFactor(p);
+  }
+
+  updateMines(dt) {
+    for (const m of this.mines) {
+      m.t += dt;
+      if (m.arm > 0) { m.arm -= dt; continue; }
+      const p = m.owner;
+      if (this.ending) continue;
+      let hit = false;
+      for (const f of this.foesOf(p)) {
+        if (f.dead) continue;
+        const r = f.radius + 40;
+        if ((f.x - m.x) * (f.x - m.x) + (f.y - m.y) * (f.y - m.y) < r * r) { hit = true; break; }
+      }
+      if (!hit) continue;
+      m.dead = true;
+      const dmg = (10 + p.stats[Stat.ELEMENTAL] * 3 + this.wave * 1.6) * p.damageMult();
+      this.explodeAt(m.x, m.y, 85 + p.stats[Stat.ELEMENTAL] * 2.5, Math.round(dmg), false, 20, 0, p.extraSrc, p);
+    }
+    this.mines = this.mines.filter((m) => !m.dead && m.owner.alive !== undefined);
+  }
+
+  minionCount(p) { return Math.min(6, 2 + Math.floor((p.level - 1) / 4)); }
+  minionPos(p, i, n) {
+    const a = p.minionAng + Math.PI * 2 * i / n;
+    return [p.x + Math.cos(a) * 66, p.y + Math.sin(a) * 50 - 6];
+  }
+
+  /** Mirtilo Invocador: mirtilinhos que voam em volta e atiram sozinhos. */
+  updateMinions(p, dt) {
+    p.minionAng += dt * 1.8;
+    const n = this.minionCount(p);
+    while (p.minionCd.length < n) p.minionCd.push(this.rng.float() * 0.6);
+    if (this.ending || (this.pvp === 'duel' && this.countdown > 0)) return;
+    for (let i = 0; i < n; i++) {
+      p.minionCd[i] -= dt;
+      if (p.minionCd[i] > 0) continue;
+      const [x, y] = this.minionPos(p, i, n);
+      const t = this.nearestFoe(p, x, y, 330, null);
+      if (!t) continue;
+      p.minionCd[i] = 1.1 / this.atkFactor(p);
+      const a = Math.atan2(t.y - y, t.x - x), sp = 620;
+      const crit = this.rng.int(100) < p.stats[Stat.CRIT];
+      const dmg = Math.max(1, Math.round((4 + p.stats[Stat.ELEMENTAL] + p.stats[Stat.RANGED] * 0.6 + this.wave * 0.35) * p.damageMult() * (crit ? 2 : 1)));
+      this.bullets.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 400 / sp, damage: dmg, crit,
+        pierce: 0, bounce: 0, explosion: 0, burn: 0, slow: 0, source: p.extraSrc, owner: p,
+        knockback: 4, color: '#6A7BFF', lightning: false, minion: true, radius: 6, dead: false, hit: [],
+      });
+    }
+  }
+
+  /** Coco Rolante: atropela quem encosta enquanto anda. */
+  updateRam(p, dt) {
+    const foes = this.foesOf(p);
+    for (const f of foes) if (f.ramCd > 0) f.ramCd -= dt;
+    if (!p.moving || this.ending || (this.pvp === 'duel' && this.countdown > 0)) return;
+    const sp = p.speed() / 240;
+    const dmg = (6 + p.stats[Stat.ARMOR] * 1.5 + p.stats[Stat.MELEE] * 1.5 + this.wave * 0.9) * sp * p.damageMult();
+    for (const f of foes) {
+      if (f.dead || f.ramCd > 0) continue;
+      const r = f.radius + p.radius + 6;
+      const dx = f.x - p.x, dy = f.y - p.y, d2 = dx * dx + dy * dy;
+      if (d2 >= r * r) continue;
+      const d = Math.sqrt(d2) + 0.001;
+      f.ramCd = 0.4;
+      this.hitFoe(f, Math.round(dmg), false, dx / d, dy / d, 26, 0, '#FFD27A', p.extraSrc, p);
+      this.burst(f.x, f.y, 4, '230,200,150', 140, 4, 0.3);
+    }
   }
 
   updatePlayer(dt, jx, jy) {
@@ -631,7 +1029,14 @@ class Game {
   /** Com mais jogadores, os insetos têm mais vida e aparecem mais rápido. */
   coopHp() { return 1 + 0.6 * (this.players.length - 1); }
   coopSpawn() { return 1 + 0.25 * (this.players.length - 1); }
-  hpMult() { const w = this.wave - 1; return (1 + 0.25 * w + 0.028 * w * w) * this.coopHp(); }
+  /** Vida dos insetos por onda: cresce rápido até a onda 20 e depois em linha reta (Inferno/Infinito). */
+  static rawHp(w) {
+    if (w <= 19) return 1 + 0.25 * w + 0.028 * w * w;
+    return 1 + 0.25 * 19 + 0.028 * 361 + (0.25 + 0.056 * 19) * (w - 19);
+  }
+  hpMult() { return Game.rawHp(this.wave - 1) * this.coopHp(); }
+  /** Chefe numa onda depois da "dele" (Infinito, Inferno) fica mais forte. */
+  bossScale(d) { return Math.max(1, Game.rawHp(this.wave - 1) / Game.rawHp(d.minWave - 1)); }
   spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty] / this.coopSpawn(); }
   enemyCap() { return Math.min(175 + 15 * (this.players.length - 1), 70 + this.wave * 5 + 15 * (this.players.length - 1)); }
 
@@ -677,7 +1082,7 @@ class Game {
   }
 
   spawnEnemy(d, x, y) {
-    const maxHp = d.hp * (d.boss ? this.coopHp() : this.hpMult()) * DIFF_HP[this.difficulty];
+    const maxHp = d.hp * (d.boss ? this.coopHp() * this.bossScale(d) : this.hpMult()) * DIFF_HP[this.difficulty];
     const baseDmg = Math.max(1, Math.round(d.damage + d.damagePerWave * (this.wave - 1)));
     const e = {
       id: this.nextEnemyId++, def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
@@ -778,6 +1183,10 @@ class Game {
             }
           }
           break;
+        case AI_BOSS_BEETLE:
+          this.updateBeetleBoss(e, dt, nx, ny);
+          if (e.aiState === 0) { mx = nx; my = ny; } else if (e.aiState === 1) { mx = nx * 0.2; my = ny * 0.2; } else if (e.aiState === 3) { mx = e.dashX; my = e.dashY; sp = 720; }
+          break;
         case AI_BOSS_ANT:
           this.updateAntBoss(e, dt, nx, ny);
           if (e.aiState === 0) { mx = nx; my = ny; } else if (e.aiState === 1) { mx = nx * 0.3; my = ny * 0.3; } else if (e.aiState === 3) { mx = e.dashX; my = e.dashY; sp = 650; }
@@ -847,6 +1256,37 @@ class Game {
     }
   }
 
+  /** Besouro Infernal: anéis de fogo, investidas e chama escorpiões. */
+  updateBeetleBoss(e, dt, nx, ny) {
+    e.aiTimer -= dt;
+    switch (e.aiState) {
+      case 0:
+        if (e.aiTimer <= 0) { e.aiState = 1; e.aiTimer = 2.2; e.aiTimer2 = 0; }
+        break;
+      case 1:
+        e.aiTimer2 -= dt;
+        if (e.aiTimer2 <= 0) {
+          e.aiTimer2 = 0.55;
+          e.spiral += 0.3;
+          for (let k = 0; k < 18; k++) this.fireEnemyBullet(e.x, e.y, e.spiral + Math.PI * 2 * k / 18, 240, e.damage);
+        }
+        if (e.aiTimer <= 0) { e.aiState = 2; e.aiTimer = 0.6; e.dashX = nx; e.dashY = ny; }
+        break;
+      case 2:
+        if (e.aiTimer <= 0) { e.aiState = 3; e.aiTimer = 0.7; }
+        break;
+      default:
+        if (e.aiTimer <= 0) {
+          e.aiState = 0;
+          e.aiTimer = 2.6;
+          for (let k = 0; k < 3; k++) {
+            const a = Math.PI * 2 * k / 3 + e.spiral;
+            this.telegraphs.push({ def: E.ESCORPIAO, x: clamp(e.x + Math.cos(a) * 140, 40, WORLD_W - 40), y: clamp(e.y + Math.sin(a) * 140, 40, WORLD_H - 40), time: 0.7 });
+          }
+        }
+    }
+  }
+
   separateEnemies() {
     const es = this.enemies, n = es.length;
     for (let i = 0; i < n; i++) {
@@ -874,7 +1314,7 @@ class Game {
     this.enemyBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false });
   }
 
-  damagePlayer(p, dmg, source) {
+  damagePlayer(p, dmg, source, iframes) {
     if (p.iframes > 0 || !p.alive || this.state !== 'PLAYING' || this.ending) return;
     const thorns = p.specials[SP_THORNS];
     if (source && thorns > 0 && !source.dead) this.damageEnemy(source, thorns, false, 0, 0, 0, 0, '#FF7AB0', null, p);
@@ -885,7 +1325,7 @@ class Game {
     }
     const d = Math.max(1, Math.round(dmg * p.armorFactor()));
     p.hp -= d;
-    p.iframes = 0.4;
+    p.iframes = iframes || 0.4;
     this.shakeAt(7, p);
     this.addText(p.x, p.y - 40, '-' + d, '#FF4A4A', 30);
     this.snd('HURT', p);
@@ -894,24 +1334,41 @@ class Game {
 
   // --- Armas ---
 
-  updateWeapons(dt) {
-    for (const p of this.players) if (p.alive) this.updatePlayerWeapons(p, dt);
+  /** idle = só acompanham o legume (fim da onda / contagem do duelo), sem atacar. */
+  updateWeapons(dt, idle) {
+    for (const p of this.players) if (p.alive) this.updatePlayerWeapons(p, dt, idle);
   }
 
-  updatePlayerWeapons(p, dt) {
+  /** Onde fica a arma i (de n) em volta do legume. O Alien segura mais longe, com os tentáculos. */
+  weaponSpot(p, i, n) {
+    if (p.kind === 'laser') {
+      const a = p.aimAng;
+      return [p.x + Math.cos(a) * 34, p.y + Math.sin(a) * 28 + 8];
+    }
+    const a = n === 1 ? (p.facingLeft ? Math.PI : 0) : Math.PI * 2 * i / n - Math.PI / 2;
+    const rx = p.kind === 'alien' ? 62 : 44, ry = p.kind === 'alien' ? 50 : 36;
+    return [p.x + Math.cos(a) * rx, p.y + Math.sin(a) * ry + 6];
+  }
+
+  updatePlayerWeapons(p, dt, idle) {
     const n = p.weapons.length;
     for (let i = 0; i < n; i++) {
       const w = p.weapons[i];
       w.owner = p;
-      const a = n === 1 ? (p.facingLeft ? Math.PI : 0) : Math.PI * 2 * i / n - Math.PI / 2;
-      const hx = p.x + Math.cos(a) * 44, hy = p.y + Math.sin(a) * 36 + 6;
+      const [hx, hy] = this.weaponSpot(p, i, n);
       const k = Math.min(1, dt * 20);
       w.x += (hx - w.x) * k;
       w.y += (hy - w.y) * k;
+      if (w.def.laser) { w.angle = p.aimAng; w.tipX = w.x; w.tipY = w.y; continue; } // canhão manual
+      if (idle) {
+        w.attackT = -1; w.tipX = w.x; w.tipY = w.y;
+        w.angle = lerpAngle(w.angle, p.facingLeft ? Math.PI : 0, Math.min(1, dt * 8));
+        continue;
+      }
       w.cd -= dt;
       if (w.attacking()) { this.updateMelee(w, dt); continue; }
       w.tipX = w.x; w.tipY = w.y;
-      const t = this.nearestEnemy(w.x, w.y, w.range(p), null);
+      const t = this.nearestFoe(p, w.x, w.y, w.range(p), null);
       if (!t) {
         w.angle = lerpAngle(w.angle, p.facingLeft ? Math.PI : 0, Math.min(1, dt * 8));
         continue;
@@ -950,14 +1407,14 @@ class Game {
     w.tipX = w.x + w.dirX * ext;
     w.tipY = w.y + w.dirY * ext;
     const hr = w.def.hitRadius;
-    for (const e of this.enemies) {
+    for (const e of this.foesOf(w.owner)) {
       if (e.dead || w.hitList.includes(e)) continue;
       const r = e.radius + hr;
       const dx = e.x - w.tipX, dy = e.y - w.tipY;
       if (dx * dx + dy * dy < r * r) {
         w.hitList.push(e);
         const dmg = this.rollDamage(w);
-        this.damageEnemy(e, dmg, this.lastCrit, w.dirX, w.dirY, w.def.knockback, 0, null, w);
+        this.hitFoe(e, dmg, this.lastCrit, w.dirX, w.dirY, w.def.knockback, 0, null, w, w.owner);
       }
     }
   }
@@ -975,7 +1432,7 @@ class Game {
       this.bullets.push({
         x: w.x + c * 16, y: w.y + s * 16, vx: c * def.projSpeed, vy: s * def.projSpeed,
         life: (range + 40) / def.projSpeed, damage: dmg, crit: this.lastCrit,
-        pierce: def.pierce, bounce: def.bounce, explosion: def.explosion, burn, slow: def.slow, source: w,
+        pierce: def.pierce, bounce: def.bounce, explosion: def.explosion, burn, slow: def.slow, source: w, owner: p,
         knockback: def.knockback, color: def.color, lightning: !!def.lightning,
         radius: def.explosion > 0 || def.burn > 0 || def.slow > 0 ? 10 : 7, dead: false, hit: [],
       });
@@ -1000,19 +1457,19 @@ class Game {
         b.dead = true;
         continue;
       }
-      for (const e of this.enemies) {
+      for (const e of this.foesOf(b.owner)) {
         if (e.dead || b.hit.includes(e)) continue;
         const dx = e.x - b.x, dy = e.y - b.y;
         const r = e.radius + b.radius;
         if (dx * dx + dy * dy >= r * r) continue;
         if (b.explosion > 0) { this.explode(b); b.dead = true; break; }
         const sp = Math.hypot(b.vx, b.vy);
-        if (b.slow > 0) e.slowTime = Math.max(e.slowTime, b.slow);
-        this.damageEnemy(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, null, b.source);
+        if (b.slow > 0 && !(e instanceof Player)) e.slowTime = Math.max(e.slowTime, b.slow);
+        this.hitFoe(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, null, b.source, b.owner);
         b.hit.push(e);
         if (b.lightning) this.burst(e.x, e.y, 5, '255,242,122', 160, 3, 0.25);
         if (b.bounce > 0) {
-          const nt = this.nearestEnemy(e.x, e.y, 320, b.hit);
+          const nt = this.nearestFoe(b.owner, e.x, e.y, 320, b.hit);
           if (nt) {
             b.bounce--;
             const a = Math.atan2(nt.y - b.y, nt.x - b.x);
@@ -1030,20 +1487,22 @@ class Game {
   }
 
   explode(b) {
-    this.explodeAt(b.x, b.y, b.explosion, b.damage, b.crit, b.knockback, b.burn, b.source);
+    this.explodeAt(b.x, b.y, b.explosion, b.damage, b.crit, b.knockback, b.burn, b.source, b.owner);
   }
 
   explodeAt(x, y, r, damage, crit, kb, burn, src, owner) {
     if (this.explosionDepth > 6) return; // evita reação em cadeia infinita
     this.explosionDepth++;
-    for (const e of this.enemies) {
+    const who = owner || (src && src.owner) || null;
+    const foes = this.pvp === 'duel' ? this.players.filter((q) => q !== who && q.alive) : this.enemies;
+    for (const e of foes) {
       if (e.dead) continue;
       const dx = e.x - x, dy = e.y - y;
       const rr = r + e.radius;
       const d2 = dx * dx + dy * dy;
       if (d2 < rr * rr) {
         const d = Math.sqrt(d2) + 0.001;
-        this.damageEnemy(e, damage, crit, dx / d, dy / d, kb, burn, null, src, owner);
+        this.hitFoe(e, damage, crit, dx / d, dy / d, kb, burn, null, src, who);
       }
     }
     this.explosionDepth--;
@@ -1083,7 +1542,7 @@ class Game {
       e.vy += ky * kb * 12 * resist;
     }
     const color = textColor || (crit ? '#FFE14A' : '#FFFFFF');
-    this.addText(e.x + (this.rng.float() - 0.5) * 20, e.y - e.radius, String(dmg), color, crit ? 30 : 22);
+    if (color !== 'none') this.addText(e.x + (this.rng.float() - 0.5) * 20, e.y - e.radius, String(Math.max(1, Math.round(dmg))), color, crit ? 30 : 22);
     if (burn > 0) {
       e.burnTime = 2.1;
       if (e.burnDamage < burn) e.burnDamage = burn;
@@ -1091,7 +1550,7 @@ class Game {
       if (e.burnTick <= 0) e.burnTick = 0.5;
     }
     const p = owner || (src && src.owner) || this.players[0];
-    if (p.alive && p.stats[Stat.LIFESTEAL] > 0 && p.hp < p.maxHp() && this.rng.int(100) < p.stats[Stat.LIFESTEAL]) p.heal(1);
+    this.tryLifesteal(p, src);
     if (e.hp <= 0) this.killEnemy(e, p);
     else this.snd('HIT');
   }
@@ -1176,6 +1635,7 @@ class Game {
         if (pk.type === 0) {
           // sementes são do time: todo mundo ganha
           for (const q of this.players) { q.materials += pk.value; this.addXp(q, pk.value); }
+          this.seedsCollected += pk.value;
           this.snd('PICKUP');
         } else if (pk.type === 2) {
           p.crates++;
@@ -1248,10 +1708,11 @@ class Game {
     if (this.state !== 'SHOP' || !this.player || this.coop) return null;
     return JSON.stringify(Object.assign({
       v: 2, diff: this.difficulty, wave: this.wave, kills: this.kills, harvest: this.lastHarvest, rerolls: this.shopRerolls,
+      seeds: this.seedsCollected,
     }, playerToData(this.player), {
       offers: this.offers.map((o) => (!o ? null : o.weapon
-        ? ['W', WEAPONS.indexOf(o.weapon), o.tier, o.price, o.locked ? 1 : 0]
-        : ['I', ITEMS.indexOf(o.item), o.price, o.locked ? 1 : 0])),
+        ? ['W', ALL_WEAPONS.indexOf(o.weapon), o.tier, o.price, o.locked ? 1 : 0]
+        : ['I', ALL_ITEMS.indexOf(o.item), o.price, o.locked ? 1 : 0])),
     }));
   }
 
@@ -1263,12 +1724,13 @@ class Game {
       if (!p) return false;
       this.offers = d.offers.map((o) => {
         if (!o) return null;
-        if (o[0] === 'W') return { weapon: WEAPONS[o[1]], item: null, tier: o[2], price: o[3], locked: !!o[4] };
-        return { weapon: null, item: ITEMS[o[1]], tier: ITEMS[o[1]].tier, price: o[2], locked: !!o[3] };
+        if (o[0] === 'W') return ALL_WEAPONS[o[1]] ? { weapon: ALL_WEAPONS[o[1]], item: null, tier: o[2], price: o[3], locked: !!o[4] } : null;
+        return ALL_ITEMS[o[1]] ? { weapon: null, item: ALL_ITEMS[o[1]], tier: ALL_ITEMS[o[1]].tier, price: o[2], locked: !!o[3] } : null;
       });
       this.player = p;
       this.players = [p];
-      this.coop = false;
+      this.coop = false; this.pvp = ''; this.mines = []; this.zone = null;
+      this.seedsCollected = d.seeds | 0;
       this.difficulty = d.diff; this.wave = d.wave; this.kills = d.kills;
       this.lastHarvest = d.harvest; this.shopRerolls = d.rerolls;
       this.paused = false; this.ending = false;
@@ -1325,18 +1787,16 @@ function netStep(o, dt, ahead, speed) {
   o.y += (o.ty - o.y) * k;
 }
 
-function waveBanner(n) {
-  return n === 10 ? 'ONDA 10 - CHEFÃO!' : n === MAX_WAVE ? 'ONDA FINAL - CHEFONA!' : 'ONDA ' + n;
-}
+function waveBanner(n) { return 'ONDA ' + n; }
 
 /** Jogador -> dados simples (para salvar a partida ou mandar pela rede). */
 function playerToData(p) {
   return {
     char: CHARS.indexOf(p.character), level: p.level, xp: p.xp, materials: p.materials,
     stats: p.stats.slice(),
-    weapons: p.weapons.map((w) => [WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
-    items: p.items.map((it) => ITEMS.indexOf(it)),
-    lp: p.levelsPending, cr: p.crates, hv: p.lastHarvest,
+    weapons: p.weapons.map((w) => [ALL_WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
+    items: p.items.map((it) => ALL_ITEMS.indexOf(it)),
+    lp: p.levelsPending, cr: p.crates, hv: p.lastHarvest, pk: p.peakLs,
   };
 }
 
@@ -1345,20 +1805,22 @@ function playerFromData(d, id, name, slot) {
   if (!d || !CHARS[d.char] || !Array.isArray(d.weapons) || !Array.isArray(d.items) || !Array.isArray(d.stats)) return null;
   const p = new Player(CHARS[d.char], id, name, slot);
   p.weapons = d.weapons.map(([wi, tier, total, wave]) => {
-    const w = new Weapon(WEAPONS[wi], clamp(tier | 0, 0, 3));
+    const w = new Weapon(ALL_WEAPONS[wi], clamp(tier | 0, 0, 3));
     w.totalDamage = total || 0; w.waveDamage = wave || 0;
     w.owner = p;
     return w;
   });
-  if (!p.weapons.length || p.weapons.length > MAX_WEAPONS || p.weapons.some((w) => !w.def)) return null;
+  if (!p.weapons.length || p.weapons.length > p.maxWeapons() || p.weapons.some((w) => !w.def)) return null;
   p.stats = d.stats.slice(0, Stat.COUNT).map((v) => Number(v) || 0);
   while (p.stats.length < Stat.COUNT) p.stats.push(0);
   for (const ii of d.items) {
-    const it = ITEMS[ii];
+    const it = ALL_ITEMS[ii];
     if (!it) return null;
     p.items.push(it); // os atributos já estão em "stats"
     if (it.special >= 0) p.specials[it.special] += it.specialValue;
+    p.addCy(it);
   }
+  p.peakLs = Math.max(p.peakLs, +d.pk || 0);
   p.level = d.level | 0 || 1; p.xp = d.xp | 0; p.materials = d.materials | 0;
   p.levelsPending = d.lp | 0; p.crates = d.cr | 0; p.lastHarvest = d.hv | 0;
   p.hp = p.maxHp();

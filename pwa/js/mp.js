@@ -7,6 +7,9 @@
 //  - Entre as ondas, cada um faz as melhorias e a loja no próprio aparelho; quando todos
 //    ficam prontos, o anfitrião começa a próxima onda.
 //
+// Modo PvP: cada um joga 15 rodadas sozinho no próprio aparelho para se preparar; depois todos
+// entram numa arena (rodada pelo anfitrião) que vai fechando, com 2 atributos trocados entre eles.
+//
 // No banco (Firebase): rooms/CODIGO/h = escrito pelo anfitrião, rooms/CODIGO/g/ID = por cada convidado.
 'use strict';
 
@@ -15,6 +18,10 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SLOT_COLORS = ['#4FC3F7', '#FF8A65', '#CE93D8', '#FFD54F'];
 const ENEMY_DEFS = Object.values(E);
 const HOST_TIMEOUT = 25000, GUEST_TIMEOUT = 25000;
+const PH = 20; // campos fixos de cada jogador na foto da arena (depois vêm as armas, 5 números cada)
+// Atributos que podem ser trocados no duelo (sorte e colheita não fazem diferença na arena)
+const SWAP_STATS = [Stat.HP, Stat.REGEN, Stat.LIFESTEAL, Stat.DAMAGE, Stat.MELEE, Stat.RANGED, Stat.ELEMENTAL,
+  Stat.ATK_SPEED, Stat.CRIT, Stat.RANGE, Stat.ARMOR, Stat.DODGE, Stat.SPEED];
 
 function randomCode() {
   let s = '';
@@ -66,12 +73,21 @@ class Multiplayer {
     this.enemyMap = new Map();
     this.lastShots = 0;
     this.ended = false;
+    this.mode = 'coop';          // 'coop' ou 'pvp' (escolhido pelo anfitrião na sala)
+    this.phase = '';             // PvP: 'prep' (15 rodadas), 'duel' (arena)
+    this.pvpReadySent = false;   // já mandei meus dados pro duelo
+    this.duelData = new Map();   // anfitrião: id -> dados do jogador pronto pro duelo
+    this.duelSeen = '';
+    this.swapInfo = null;        // {stats:[a,b], rows:[{name, before:[..], after:[..]}]}
+    this.myStatus = '';
   }
 
   isHost() { return this.active && this.role === 'host'; }
+  /** Convidado com a arena vindo do anfitrião (no PvP, a preparação é local). */
+  guestDriven() { return this.isGuest() && this.inGame && this.phase !== 'prep'; }
   isGuest() { return this.active && this.role === 'guest'; }
   path(p) { return 'rooms/' + this.code + (p ? '/' + p : ''); }
-  inviteLink() { return location.origin + location.pathname + '?sala=' + this.code; }
+  inviteLink() { return (location.protocol === 'file:' ? WEBSITE_URL : location.origin + location.pathname) + '?sala=' + this.code; }
   /** Conexão com o anfitrião (convidado) ou com todos os convidados (anfitrião). */
   connText(open) { return open ? 'direto ⚡' : 'via servidor 🌐'; }
 
@@ -100,7 +116,7 @@ class Multiplayer {
       this.roster = [{ id: this.pid, name, char, ready: true, conn: 1, host: true }];
       await Fb.put(this.path(), {
         h: {
-          meta: { host: this.pid, diff, st: 'lobby', ts: SERVER_TIME, hb: Date.now(), v: 1 },
+          meta: { host: this.pid, diff, st: 'lobby', ts: SERVER_TIME, hb: Date.now(), v: 1, mode: this.mode },
           roster: this.rosterData(),
         },
       });
@@ -162,10 +178,10 @@ class Multiplayer {
     this.reset();
     g.rec = null; g.onWaveEnd = null;
     if (wasActive && !silent) {
-      if (['LOBBY', 'PLAYING', 'LEVEL_UP', 'CRATE', 'SHOP', 'GAME_OVER', 'VICTORY'].includes(g.state)) {
+      if (['LOBBY', 'PLAYING', 'LEVEL_UP', 'CRATE', 'SHOP', 'GAME_OVER', 'VICTORY', 'DUEL_END'].includes(g.state)) {
         g.state = 'MP_MENU';
       }
-      g.coop = false;
+      g.coop = false; g.pvp = ''; g.zone = null;
       if (msg) this.ui.showToast(msg, 4);
     }
   }
@@ -189,7 +205,10 @@ class Multiplayer {
 
   rosterData() {
     const o = {};
-    this.roster.forEach((r, i) => { o[r.id] = { n: r.name, c: r.char, r: !!r.ready, o: i, k: r.conn ? 1 : 0 }; });
+    this.roster.forEach((r, i) => {
+      o[r.id] = { n: r.name, c: r.char, r: !!r.ready, o: i, k: r.conn ? 1 : 0 };
+      if (r.pv) o[r.id].p = r.pv; // PvP: rodada e situação de cada um ("12|1")
+    });
     return o;
   }
 
@@ -223,6 +242,12 @@ class Multiplayer {
     if (!this.isHost()) return;
     this.diff = d;
     Fb.patch(this.path('h/meta'), { diff: d }).catch(() => {});
+  }
+
+  setMode(m) {
+    if (!this.isHost()) return;
+    this.mode = m;
+    Fb.patch(this.path('h/meta'), { mode: m }).catch(() => {});
   }
 
   canStart() {
@@ -272,6 +297,7 @@ class Multiplayer {
       if (name !== r.name || char !== r.char) { r.name = name; r.char = char; changed = true; }
       if (!this.inGame && !!d.r !== r.ready) { r.ready = !!d.r; changed = true; }
       if (d.hb !== r.hb) { r.hb = d.hb; r.seenAt = now(); }
+      if (typeof d.pv === 'string' && d.pv !== r.pv) { r.pv = d.pv.slice(0, 20); changed = true; }
       if (typeof d.a === 'string' && d.a !== r.answer && r.peer) {
         r.answer = d.a;
         r.peer.acceptAnswer(d.a).catch(() => {});
@@ -318,6 +344,23 @@ class Multiplayer {
     else if (kind === 'r') this.onReadyMsg(id, d);
   }
 
+  /** Guarda a situação de um jogador na preparação do PvP ("rodada|0 jogando,1 loja,2 pronto,3 caiu"). */
+  pvStatus() {
+    const g = this.game;
+    const st = this.pvpReadySent ? 2 : g.state === 'PLAYING' ? (g.prepDowned ? 3 : 0) : 1;
+    return g.wave + '|' + st;
+  }
+
+  sendPvStatus() {
+    const s = this.pvStatus();
+    if (s === this.myStatus) return;
+    this.myStatus = s;
+    if (this.isHost()) {
+      const me = this.roster.find((r) => r.id === this.pid);
+      if (me) { me.pv = s; this.pushRoster(); }
+    } else Fb.patch(this.path('g/' + this.pid), { pv: s }).catch(() => {});
+  }
+
   /** Posição de um convidado. */
   onInput(id, d) {
     if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
@@ -333,6 +376,8 @@ class Multiplayer {
     netTrack(p, clamp(+d.x || 0, p.radius, WORLD_W - p.radius), clamp(+d.y || 0, p.radius, WORLD_H - p.radius), +d.tm || now());
     p.facingLeft = !!(d.f & 1);
     p.moving = !!(d.f & 2);
+    p.wantFire = !!(d.f & 4);
+    p.aimAng = (d.a | 0) / 100;
     p.lookX = (d.lx | 0) / 100; p.lookY = (d.ly | 0) / 100;
   }
 
@@ -340,6 +385,11 @@ class Multiplayer {
   onReadyMsg(id, d) {
     if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
     const g = this.game;
+    if (d && d.pvp && d.gid === this.gid && this.phase === 'prep') { // pronto pro duelo
+      if (d.d && playerFromData(d.d)) this.duelData.set(id, d.d);
+      this.tryStartDuel();
+      return;
+    }
     if (!d || !this.inGame || d.gid !== this.gid || g.state === 'PLAYING' || d.w !== g.wave) return;
     if (d.d) {
       if (g.replacePlayer(id, d.d)) this.readyMap.set(id, d.w);
@@ -359,12 +409,13 @@ class Multiplayer {
     if (meta.st === 'closed') { this.leave('O anfitrião fechou a sala.'); return; }
     if (meta.hb !== this.hostHb) { this.hostHb = meta.hb; this.hostSeenAt = now(); }
     this.diff = meta.diff | 0;
+    this.mode = meta.mode === 'pvp' ? 'pvp' : 'coop';
     if (path === '/snap') { this.onSnap(value); return; }
     // lista de jogadores
     const ro = data.roster || {};
     this.roster = Object.keys(ro).map((id) => {
       const x = ro[id] || {};
-      return { id, name: String(x.n || '?').slice(0, 16), char: CHARS[x.c] ? x.c | 0 : 0, ready: !!x.r, conn: x.k ? 1 : 0, o: x.o | 0, host: id === meta.host };
+      return { id, name: String(x.n || '?').slice(0, 16), char: CHARS[x.c] ? x.c | 0 : 0, ready: !!x.r, conn: x.k ? 1 : 0, o: x.o | 0, host: id === meta.host, pv: typeof x.p === 'string' ? x.p : '' };
     }).sort((a, b) => a.o - b.o);
     // conexão direta: o anfitrião mandou uma oferta para mim
     const offer = data.o && data.o[this.pid];
@@ -383,6 +434,7 @@ class Multiplayer {
     // dados do intervalo entre ondas
     const ps = data.ps && data.ps[this.pid];
     if (typeof ps === 'string' && ps !== this.psSeen) { this.psSeen = ps; this.onPs(ps); }
+    if (typeof data.duel === 'string' && data.duel !== this.duelSeen) { this.duelSeen = data.duel; this.onDuel(data.duel); }
     if (meta.st === 'lobby' && this.inGame && this.ended) this.inGame = false;
   }
 
@@ -402,6 +454,7 @@ class Multiplayer {
     const kind = msg[0], body = msg.slice(1);
     if (kind === 's') this.onSnap(body);
     else if (kind === 'p') this.onPs(body);
+    else if (kind === 'd' && body !== this.duelSeen) { this.duelSeen = body; this.onDuel(body); }
   }
 
   // ------------------------------------------------------------------
@@ -410,7 +463,7 @@ class Multiplayer {
 
   startGame() {
     if (!this.canStart()) return false;
-    const s = { gid: Date.now(), diff: this.diff, list: this.roster.map((r) => ({ id: r.id, name: r.name, char: r.char })) };
+    const s = { gid: Date.now(), diff: this.diff, mode: this.mode, list: this.roster.map((r) => ({ id: r.id, name: r.name, char: r.char })) };
     const str = JSON.stringify(s);
     Fb.put(this.path('h/start'), str).then(() => Fb.patch(this.path('h/meta'), { st: 'game' })).catch(() => {});
     this.beginGame(s);
@@ -425,8 +478,11 @@ class Multiplayer {
     this.ready = false; this.readyMap.clear(); this.readySlots = [];
     this.breakWave = 0; this.enemyMap.clear();
     this.lastSnapAt = 0; this.placeMe = true;
-    g.newCoopRun(s.list, this.pid, s.diff);
+    this.phase = ''; this.pvpReadySent = false; this.duelData.clear(); this.swapInfo = null; this.myStatus = '';
+    for (const r of this.roster) r.pv = '';
     this.lastShots = 0;
+    if (s.mode === 'pvp') { this.beginPvpPrep(s); return; }
+    g.newCoopRun(s.list, this.pid, s.diff);
     if (this.isHost()) {
       g.rec = [];
       g.onWaveEnd = () => this.hostWaveEnd();
@@ -442,11 +498,98 @@ class Multiplayer {
     this.ui.joy = null;
   }
 
+  // ------------------------------------------------------------------
+  // PvP
+  // ------------------------------------------------------------------
+
+  /** Cada um joga as 15 rodadas de preparação sozinho, no próprio aparelho. */
+  beginPvpPrep(s) {
+    const g = this.game;
+    const me = s.list.find((x) => x.id === this.pid) || s.list[0];
+    this.phase = 'prep';
+    g.rec = null;
+    g.onWaveEnd = null;
+    g.newPvpPrep(CHARS[me.char] || CHARS[0], s.diff);
+    g.player.name = this.name;
+    if (this.isGuest()) { this.myReady = false; Fb.patch(this.path('g/' + this.pid), { r: false }).catch(() => {}); }
+    this.ui.newUnlocks = '';
+    this.ui.joy = null;
+    this.sendPvStatus();
+  }
+
+  /** Terminou as 15 rodadas: manda o legume pronto pro duelo. */
+  pvpReady() {
+    const g = this.game;
+    if (this.phase !== 'prep' || this.pvpReadySent || !g.prepFinished()) return;
+    this.pvpReadySent = true;
+    const data = playerToData(g.player);
+    if (this.isHost()) {
+      this.duelData.set(this.pid, data);
+      this.tryStartDuel();
+    } else {
+      const msg = JSON.stringify({ gid: this.gid, pvp: 1, d: data });
+      if (this.hostPeer) this.hostPeer.send('r' + msg, true);
+      Fb.patch(this.path('g/' + this.pid), { rd: msg }).catch(() => {});
+    }
+    this.sendPvStatus();
+  }
+
+  /** Quem ainda está se preparando (nome e rodada). */
+  pvpWaiting() {
+    return this.roster.filter((r) => {
+      if (r.id === this.pid) return !this.pvpReadySent;
+      return !(r.pv && r.pv.split('|')[1] === '2');
+    }).map((r) => r.name + (r.pv ? ' (rodada ' + r.pv.split('|')[0] + '/' + PVP_PREP_WAVES + ')' : ''));
+  }
+
+  /** Anfitrião: todos prontos -> sorteia a troca de atributos e abre a arena. */
+  tryStartDuel() {
+    if (!this.isHost() || this.phase !== 'prep') return;
+    const ids = this.roster.map((r) => r.id);
+    if (!ids.every((id) => this.duelData.has(id)) || ids.length < 2) return;
+    const list = this.roster.map((r) => ({ id: r.id, name: r.name, data: JSON.parse(JSON.stringify(this.duelData.get(r.id))) }));
+    // 2 atributos sorteados: cada um recebe os valores do próximo da lista (com 2 jogadores, é uma troca)
+    const pool = SWAP_STATS.slice();
+    const a = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    const b = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    const before = list.map((x) => [x.data.stats[a], x.data.stats[b]]);
+    list.forEach((x, i) => {
+      const from = before[(i + 1) % list.length];
+      x.data.stats[a] = from[0]; x.data.stats[b] = from[1];
+    });
+    const msg = JSON.stringify({ gid: this.gid, diff: this.diff, swap: [a, b], before, list });
+    this.duelSeen = msg;
+    for (const r of this.roster) if (r.peer && r.conn) r.peer.send('d' + msg, true);
+    Fb.put(this.path('h/duel'), msg).catch(() => {});
+    this.onDuel(msg);
+  }
+
+  /** Todos: começa o duelo com os dados (já trocados) que o anfitrião mandou. */
+  onDuel(str) {
+    let d;
+    try { d = JSON.parse(str); } catch (e) { return; }
+    if (!d || d.gid !== this.gid || this.phase === 'duel' || !Array.isArray(d.list)) return;
+    if (!d.list.some((x) => x.id === this.pid)) return;
+    const g = this.game;
+    this.phase = 'duel';
+    this.ready = false;
+    this.seq = 0; this.lastQ = -1; this.sendAcc = 1; this.placeMe = true; this.lastSnapAt = 0;
+    g.newDuel(d.list, this.pid, d.diff);
+    g.countdown = 6; // 3 s mostrando a troca de atributos + 3, 2, 1
+    this.swapInfo = {
+      stats: d.swap,
+      rows: d.list.map((x, i) => ({ name: x.name, char: x.data.char, slot: i, before: d.before[i], after: [x.data.stats[d.swap[0]], x.data.stats[d.swap[1]]] })),
+    };
+    if (this.isHost()) { g.rec = []; g.onWaveEnd = null; } else g.rec = null;
+    this.ui.popupWeapon = -1; this.ui.joy = null;
+  }
+
   /** Depois do fim da partida: todos voltam para a sala de espera. */
   backToLobby() {
     const g = this.game;
     this.inGame = false;
-    g.rec = null; g.onWaveEnd = null;
+    this.phase = ''; this.pvpReadySent = false; this.swapInfo = null;
+    g.rec = null; g.onWaveEnd = null; g.pvp = ''; g.zone = null;
     g.state = 'LOBBY';
     if (this.isHost()) {
       // os convidados desmarcam o "pronto" quando a partida começa; vale o que está no banco
@@ -540,6 +683,7 @@ class Multiplayer {
         if (t - r.seenAt > GUEST_TIMEOUT) this.dropGuest(r.id, r.name + ' perdeu a conexão.');
       }
       if (!this.inGame) return;
+      if (this.phase === 'prep') { this.sendPvStatus(); return; }
       if (g.state === 'SHOP') this.tryNextWave();
       const relay = this.roster.some((r) => !r.host && !r.conn);
       const playing = g.state === 'PLAYING';
@@ -552,7 +696,7 @@ class Multiplayer {
         this.sendSnap(relay, relayNow);
       }
     } else {
-      if (t - this.hostSeenAt > HOST_TIMEOUT && t - this.lastSnapAt > HOST_TIMEOUT) {
+      if (t - this.hostSeenAt > HOST_TIMEOUT && t - this.lastSnapAt > HOST_TIMEOUT && this.phase !== 'prep') {
         this.leave('Perdemos a conexão com o anfitrião.');
         return;
       }
@@ -560,6 +704,7 @@ class Multiplayer {
         this.leave('Não deu pra entrar: a sala está cheia ou a partida já começou.');
         return;
       }
+      if (this.phase === 'prep') { this.sendPvStatus(); return; }
       if (this.inGame && g.state === 'PLAYING') {
         const direct = !!(this.hostPeer && this.hostPeer.isOpen());
         this.sendAcc += dt;
@@ -580,7 +725,8 @@ class Multiplayer {
     if (this.sentAt.size > 80) this.sentAt.delete(this.sentAt.keys().next().value);
     const s = JSON.stringify({
       gid: this.gid, w: g.wave, q, tm: Math.round(t), pg: Math.round(this.ping), x: Math.round(p.x), y: Math.round(p.y),
-      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0), lx: Math.round(p.lookX * 100), ly: Math.round(p.lookY * 100),
+      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0) | (g.input.fire ? 4 : 0), a: Math.round((g.input.aimAng || 0) * 100),
+      lx: Math.round(p.lookX * 100), ly: Math.round(p.lookY * 100),
     });
     if (direct && this.hostPeer.send('i' + s, false)) return;
     this.relayPut('g/' + this.pid + '/in', s);
@@ -612,7 +758,7 @@ class Multiplayer {
   /** Foto da arena, em números inteiros para ficar pequena. */
   buildSnap() {
     const g = this.game, R = Math.round;
-    const ph = g.state === 'PLAYING' ? 'P' : g.state === 'VICTORY' ? 'V' : g.state === 'GAME_OVER' ? 'O' : 'B';
+    const ph = g.state === 'PLAYING' ? 'P' : g.state === 'VICTORY' ? 'V' : g.state === 'GAME_OVER' ? 'O' : g.state === 'DUEL_END' ? 'X' : 'B';
     const o = { gid: this.gid, q: ++this.seq, w: g.wave, ph, k: g.kills, tm: Math.round(now()) };
     // última posição recebida de cada convidado (para medir o ping)
     o.ak = this.roster.filter((r) => !r.host && r.lastInQ > 0).map((r) => {
@@ -623,18 +769,25 @@ class Multiplayer {
       const a = [p.slot, R(p.x), R(p.y), Math.max(0, Math.ceil(p.hp)), p.maxHp(),
         (p.alive ? 1 : 0) | (p.iframes > 0 ? 2 : 0) | (p.facingLeft ? 4 : 0) | (p.moving ? 8 : 0),
         p.level, p.xp, p.materials, p.crates, p.shots, R(p.lookX * 100), R(p.lookY * 100)];
+      // classes novas: laser (ângulo, calor, ligado, alcance, largura, feixes extras) e mirtilinhos
+      let lr = 0, lw = 0;
+      if (p.kind === 'laser') { const st = g.laserStats(p); lr = R(st.range); lw = R(st.width); }
+      a.push(R(p.aimAng * 100), R(p.laser.heat * 100) + (p.laser.over ? 1000 : 0), p.laser.on ? 1 : 0, R(p.minionAng * 100) % 100000, lr, lw, p.cy.split);
       for (const w of p.weapons) {
         const ang = w.attacking() ? Math.atan2(w.dirY, w.dirX) : w.angle;
-        a.push(WEAPONS.indexOf(w.def), w.tier, R(ang * 100), R(w.tipX - p.x), R(w.tipY - p.y));
+        a.push(ALL_WEAPONS.indexOf(w.def), w.tier, R(ang * 100), R(w.tipX - p.x), R(w.tipY - p.y));
       }
       return a;
     });
+    if (ph === 'X') { const w = g.players.find((p) => p.id === g.duelWinner); o.win = w ? w.slot : -1; }
     if (ph === 'P') {
       o.t = R(g.waveTime * 10); o.d = g.waveDuration; o.en = g.ending ? 1 : 0; o.bs = g.boss && !g.boss.dead ? g.boss.id : 0;
+      if (g.zone) { o.z = [R(g.zone.x), R(g.zone.y), R(g.zone.r)]; o.cd = R(g.countdown * 10); }
+      if (g.mines.length) { const mi = []; for (const m of g.mines) mi.push(R(m.x), R(m.y), m.arm <= 0 ? 1 : 0); o.mi = mi; }
       const e = [];
       for (const en of g.enemies) {
         if (en.dead) continue;
-        const red = (en.def.ai === AI_CHARGE && en.aiState === 1) || (en.def.ai === AI_BOSS_ANT && en.aiState === 2);
+        const red = (en.def.ai === AI_CHARGE && en.aiState === 1) || ((en.def.ai === AI_BOSS_ANT || en.def.ai === AI_BOSS_BEETLE) && en.aiState === 2);
         e.push(en.id, ENEMY_DEFS.indexOf(en.def), R(en.x), R(en.y), R(1000 * Math.max(0, en.hp) / en.maxHp),
           (en.elite ? 1 : 0) | (en.facingLeft ? 2 : 0) | (en.flash > 0 ? 4 : 0) | (en.burnTime > 0 ? 8 : 0) | (en.slowTime > 0 ? 16 : 0) | (red ? 32 : 0));
       }
@@ -642,7 +795,7 @@ class Multiplayer {
       const b = [];
       for (const x of g.bullets) {
         if (x.dead) continue;
-        const kind = x.lightning ? 4 : x.slow > 0 ? 3 : x.burn > 0 ? 2 : x.explosion > 0 ? 1 : 0;
+        const kind = x.minion ? 99 : x.source && x.source.def ? ALL_WEAPONS.indexOf(x.source.def) : -1;
         b.push(R(x.x), R(x.y), R(x.vx / 10), R(x.vy / 10), kind);
       }
       o.b = b;
@@ -691,6 +844,17 @@ class Multiplayer {
         this.sentAt.delete(a[1]);
       }
     }
+    if (o.ph === 'X') {
+      if (g.state !== 'DUEL_END') {
+        this.applyPlayers(o, false);
+        const w = g.players.find((p) => p.slot === o.win);
+        g.duelWinner = w ? w.id : '';
+        g.state = 'DUEL_END';
+        this.ended = true;
+        g.fx.sound(w === g.player ? 'LEVEL_UP' : 'HURT');
+      }
+      return;
+    }
     if (o.ph === 'O' || o.ph === 'V') {
       if (g.state !== 'GAME_OVER' && g.state !== 'VICTORY') {
         g.wave = o.w; g.kills = o.k;
@@ -708,9 +872,13 @@ class Multiplayer {
       return;
     }
     // onda rolando
-    if (o.w > this.breakWave && (g.state !== 'PLAYING' || g.wave !== o.w)) this.enterWave(o.w);
+    if (this.phase !== 'duel' && o.w > this.breakWave && (g.state !== 'PLAYING' || g.wave !== o.w)) this.enterWave(o.w);
     if (g.state !== 'PLAYING' || g.wave !== o.w) return;
     g.waveTime = o.t / 10; g.waveDuration = o.d; g.ending = !!o.en; g.kills = o.k;
+    if (o.z && g.zone) { g.zone.x = o.z[0]; g.zone.y = o.z[1]; g.zone.r = o.z[2]; g.countdown = o.cd / 10; }
+    g.mines = [];
+    const mi = o.mi || [];
+    for (let i = 0; i + 2 < mi.length; i += 3) g.mines.push({ x: mi[i], y: mi[i + 1], arm: mi[i + 2] ? 0 : 1, owner: g.player });
     this.applyPlayers(o, true);
     this.applyWorld(o);
   }
@@ -726,7 +894,7 @@ class Multiplayer {
     this.enemyMap.clear();
     this.ready = false;
     this.placeMe = true;
-    g.showBanner(waveBanner(n));
+    g.showBanner(g.waveBanner(n));
     this.ui.popupWeapon = -1;
     this.ui.joy = null;
   }
@@ -756,12 +924,17 @@ class Multiplayer {
         p.facingLeft = !!(a[5] & 4); p.moving = !!(a[5] & 8);
         p.lookX = a[11] / 100; p.lookY = a[12] / 100;
       }
-      p.stats[Stat.HP] = a[4]; // vida máxima (sobe ao passar de nível durante a onda)
+      p.stats[Stat.HP] = a[4] / (p.hpMult || 1); // vida máxima (sobe ao passar de nível durante a onda)
+      // laser e mirtilinhos
+      p.laser.heat = (a[14] % 1000) / 100; p.laser.over = a[14] >= 1000;
+      if (p !== me) { p.aimAng = a[13] / 100; p.laser.on = !!a[15]; }
+      p.minionAng = a[16] / 100;
+      p.laserView = { range: a[17], width: a[18], split: a[19] };
       // armas (para desenhar)
-      const nw = Math.floor((a.length - 13) / 5);
+      const nw = Math.floor((a.length - PH) / 5);
       if (p.weapons.length !== nw) p.weapons.length = Math.min(p.weapons.length, nw);
       for (let i = 0; i < nw; i++) {
-        const k = 13 + i * 5, def = WEAPONS[a[k]];
+        const k = PH + i * 5, def = ALL_WEAPONS[a[k]];
         if (!def) continue;
         let w = p.weapons[i];
         if (!w || w.def !== def) { w = new Weapon(def, a[k + 1]); w.owner = p; p.weapons[i] = w; }
@@ -814,9 +987,10 @@ class Multiplayer {
     const b = o.b || [];
     g.bullets = [];
     for (let i = 0; i + 4 < b.length; i += 5) {
-      const kind = b[i + 4];
-      g.bullets.push({ x: b[i], y: b[i + 1], vx: b[i + 2] * 10, vy: b[i + 3] * 10, lightning: kind === 4, slow: kind === 3 ? 1 : 0,
-        burn: kind === 2 ? 1 : 0, explosion: kind === 1 ? 1 : 0, radius: kind >= 1 && kind <= 3 ? 10 : 7, dead: false });
+      const kind = b[i + 4], wd = ALL_WEAPONS[kind] || null;
+      g.bullets.push({ x: b[i], y: b[i + 1], vx: b[i + 2] * 10, vy: b[i + 3] * 10, wd, minion: kind === 99,
+        lightning: !!(wd && wd.lightning), slow: wd ? wd.slow : 0, burn: wd ? wd.burn : 0, explosion: wd ? wd.explosion : 0,
+        radius: kind === 99 ? 6 : wd && (wd.explosion || wd.burn || wd.slow) ? 10 : 7, dead: false });
     }
     const eb = o.eb || [];
     g.enemyBullets = [];
@@ -860,8 +1034,12 @@ class Multiplayer {
     const me = g.player;
     if (me.alive && !this.placeMe) g.movePlayer(me, dt, jx, jy);
     if (me.iframes > 0) me.iframes -= dt;
+    me.aimAng = g.input.aimAng; me.wantFire = !!g.input.fire;
+    if (me.kind === 'laser') me.laser.on = me.alive && me.wantFire && !me.laser.over && !g.ending && !(g.zone && g.countdown > 0);
+    if (g.zone && g.countdown > 0) g.countdown -= dt;
     for (const p of g.players) {
       if (p !== me) g.followNet(p, dt);
+      if (p.kind === 'minions') p.minionAng += dt * 1.8;
       for (const w of p.weapons) {
         if (w.ox === undefined) continue;
         w.tipX = p.x + w.ox; w.tipY = p.y + w.oy;

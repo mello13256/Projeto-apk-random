@@ -12,7 +12,8 @@
   const ui = new Ui(game, prefs, sfx);
   const mp = new Multiplayer(game, ui);
   ui.mp = mp;
-  window.hortaHostil = { game, ui, mp }; // útil para depurar no console
+  ui.account = new Account(prefs);
+  window.hortaHostil = { game, ui, mp, prefs }; // útil para depurar no console
 
   game.fx = {
     sound: (id) => sfx.play(id),
@@ -70,7 +71,8 @@
   // --- Teclado ---
   const GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
   window.addEventListener('keydown', (e) => {
-    if (e.target && e.target.tagName === 'INPUT') return; // digitando o nome do ranking
+    const box = document.getElementById('nameBox');
+    if (box && !box.hidden) return; // digitando num formulário (nome, senha, relatório...)
     sfx.unlock();
     setTouch(false);
     if (GAME_KEYS.includes(e.code)) e.preventDefault();
@@ -111,7 +113,8 @@
     let steps = 0;
     while (acc >= STEP && steps < 15) {
       const [jx, jy] = ui.menuOpen() ? [0, 0] : ui.moveVector();
-      if (mp.isGuest() && mp.inGame) mp.guestStep(STEP, jx, jy); // convidado: a arena vem do anfitrião
+      game.input = ui.aimInput();
+      if (mp.guestDriven()) mp.guestStep(STEP, jx, jy); // convidado: a arena vem do anfitrião
       else game.update(STEP, jx, jy);
       acc -= STEP;
       steps++;

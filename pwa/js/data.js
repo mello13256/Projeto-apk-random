@@ -17,7 +17,7 @@ const Stat = {
 };
 
 const MELEE = 0, RANGED = 1, ELEMENTAL = 2;
-const SHAPE_FIST = 0, SHAPE_BLADE = 1, SHAPE_GUN = 2, SHAPE_STAFF = 3, SHAPE_TUBE = 4, SHAPE_BOW = 5, SHAPE_HAMMER = 6;
+const SHAPE_FIST = 0, SHAPE_BLADE = 1, SHAPE_GUN = 2, SHAPE_STAFF = 3, SHAPE_TUBE = 4, SHAPE_BOW = 5, SHAPE_HAMMER = 6, SHAPE_LASER = 7;
 const TIER_DMG = [1, 1.7, 2.6, 3.8];
 const TIER_SCALE = [1, 1.2, 1.45, 1.8];
 const TIER_CD = [1, 0.92, 0.84, 0.76];
@@ -64,12 +64,20 @@ const W = {
     { slow: 2, projSpeed: 600, desc: 'Congela: inimigo fica lento.' }),
 };
 const WEAPONS = Object.values(W);
+// Arma exclusiva do Cyborg Cebola (não aparece na loja): mira e tiro manuais.
+const W_LASER = weaponDef('Canhão Laser', '🔴', ELEMENTAL, 22, 0.1, 460, Stat.RANGED, 2, SHAPE_LASER, '#FF2E4D', 0,
+  { laser: true, knockback: 3, desc: 'Manual: mire e segure pra atirar. 5 s seguidos e superaquece.' });
+const ALL_WEAPONS = WEAPONS.concat([W_LASER]);
 
 // Efeitos especiais dos itens
 const SP_MAGNET = 0, SP_BOOM = 1, SP_THORNS = 2, SP_CRATE = 3, SP_FRUIT = 4, SP_COUNT = 5;
 function item(name, icon, tier, ...mods) { return { name, icon, tier, mods, special: -1, specialValue: 0, specialText: '' }; }
 function sp(it, special, value, text) { return Object.assign(it, { special, specialValue: value, specialText: text }); }
 const S = Stat;
+/** Item exclusivo do Cyborg Cebola: melhora o canhão laser (cy) e o corpo (mods). */
+function cyItem(name, icon, tier, cy, text, ...mods) {
+  return Object.assign(item(name, icon, tier, ...mods), { cy, only: 'laser', specialText: text });
+}
 const ITEMS = [
   item('Adubo', '🌱', 0, S.HP, 3),
   item('Regador', '🚿', 0, S.REGEN, 2),
@@ -111,37 +119,84 @@ const ITEMS = [
   sp(item('Vulcão', '🌋', 3, S.DAMAGE, 5), SP_BOOM, 35, '35% dos inimigos explodem ao morrer'),
 ];
 
-// Desbloqueio: 0 = livre, 1 = chegar na onda X, 2 = vencer X vezes, 3 = derrotar X insetos no total
-const UNLOCK_NONE = 0, UNLOCK_WAVE = 1, UNLOCK_WINS = 2, UNLOCK_KILLS = 3;
+// Itens do Alien Hala: versões alienígenas, um pouco melhores (bônus maiores, penalidades menores).
+const ALIEN_ITEMS = ITEMS.map((it) => {
+  const mods = [];
+  for (let m = 0; m < it.mods.length; m += 2) {
+    const v = it.mods[m + 1] > 0 ? Math.ceil(it.mods[m + 1] * 1.3) : Math.trunc(it.mods[m + 1] * 0.6);
+    if (v !== 0) mods.push(it.mods[m], v);
+  }
+  const a = Object.assign({}, it, { name: it.name + ' Alien', mods, alien: true, only: 'alien' });
+  if (it.special >= 0) {
+    a.specialValue = Math.ceil(it.specialValue * 1.3);
+    a.specialText = it.specialText.replace(/\d+/, String(a.specialValue));
+  }
+  return a;
+});
+
+// Itens exclusivos do Cyborg Cebola
+const CYBORG_ITEMS = [
+  cyItem('Bobina de Plasma', '🔌', 0, { dmg: 15 }, '+15% dano do laser'),
+  cyItem('Dissipador de Calor', '🧊', 0, { cool: 30 }, 'O laser esfria 30% mais rápido'),
+  cyItem('Perna Biônica', '🦿', 0, {}, 'Pernas de metal', S.SPEED, 8, S.DODGE, 3),
+  cyItem('Célula de Energia', '⚛️', 1, { time: 30 }, '+30% tempo de tiro antes de superaquecer'),
+  cyItem('Lente de Foco', '🔍', 1, { dmg: 25, range: 60 }, '+25% dano e +60 alcance do laser'),
+  cyItem('Feixe Largo', '🔦', 1, { width: 8, dmg: 10 }, 'Feixe mais grosso (+8) e +10% dano'),
+  cyItem('Braço Biônico', '🦾', 1, {}, 'Corpo reforçado', S.HP, 6, S.ARMOR, 2),
+  cyItem('Prisma', '💠', 2, { split: 1 }, 'O laser se divide: +2 feixes laterais (40% do dano)'),
+  cyItem('Núcleo de Fusão', '☢️', 2, { boom: 1 }, 'Ao superaquecer, solta uma explosão enorme em volta'),
+  cyItem('Refrigeração Líquida', '💧', 2, { cool: 40, time: 20 }, 'Esfria 40% mais rápido e +20% tempo de tiro'),
+  cyItem('Chip de Mira', '🧠', 3, { dmg: 40, crit: 15 }, '+40% dano e +15% crítico do laser'),
+  cyItem('Satélite', '🛰️', 3, { time: 50, cool: 50, range: 80 }, '+50% tempo de tiro, +50% esfriamento, +80 alcance'),
+];
+const ALL_ITEMS = ITEMS.concat(ALIEN_ITEMS, CYBORG_ITEMS);
+
+// Desbloqueio: cada personagem bloqueado tem um texto e um teste sobre os recordes salvos (rec).
+// rec: bestWave, wins, totalKills, bestDiffWon, gamesPlayed, totalSeeds, ach {vamp, alien}
 function charDef(name, icon, tagline, startWeapon, ...mods) {
-  return { name, icon, tagline, startWeapon, mods, unlockType: UNLOCK_NONE, unlockValue: 0 };
+  return { name, icon, tagline, startWeapon, mods, unlock: null, kind: '', look: '', ability: '' };
 }
-function locked(c, type, value) { return Object.assign(c, { unlockType: type, unlockValue: value }); }
+function hero(c, look, ability, kind) { return Object.assign(c, { look, ability, kind: kind || '' }); }
+function locked(c, text, test) { return Object.assign(c, { unlock: { text, test } }); }
 function isUnlocked(c, rec) {
-  if (c.unlockType === UNLOCK_WAVE) return rec.bestWave >= c.unlockValue;
-  if (c.unlockType === UNLOCK_WINS) return rec.wins >= c.unlockValue;
-  if (c.unlockType === UNLOCK_KILLS) return rec.totalKills >= c.unlockValue;
-  return true;
+  if (!c.unlock) return true;
+  try { return !!c.unlock.test(rec || {}); } catch (e) { return false; }
 }
-function unlockText(c) {
-  if (c.unlockType === UNLOCK_WAVE) return 'Chegue na onda ' + c.unlockValue;
-  if (c.unlockType === UNLOCK_WINS) return 'Vença ' + c.unlockValue + (c.unlockValue === 1 ? ' partida' : ' partidas');
-  if (c.unlockType === UNLOCK_KILLS) return 'Derrote ' + c.unlockValue + ' insetos (no total)';
-  return '';
-}
+function unlockText(c) { return c.unlock ? c.unlock.text : ''; }
 const CHARS = [
-  charDef('Batata Básica', '🥔', 'Sem frescura. Equilibrada.', W.SOCO, S.HP, 2, S.HARVEST, 2),
-  charDef('Tomatão', '🍅', 'Grandão e brigão.', W.ESPADA, S.HP, 5, S.MELEE, 3, S.ATK_SPEED, -5, S.SPEED, -5),
-  charDef('Cenoura Ninja', '🥕', 'Rápida e esquiva.', W.FACA, S.SPEED, 10, S.DODGE, 10, S.CRIT, 5, S.HP, -3),
-  charDef('Milho Atirador', '🌽', 'Pipoca à distância!', W.PISTOLA, S.RANGED, 2, S.RANGE, 40, S.MELEE, -2),
-  charDef('Pimenta Ardida', '🌶️', 'Tudo pega fogo.', W.CAJADO, S.ELEMENTAL, 2, S.ATK_SPEED, 10, S.ARMOR, -2),
-  charDef('Berinjela Sortuda', '🍆', 'Nasceu virada pra lua.', W.ESTILINGUE, S.LUCK, 25, S.HARVEST, 8, S.DAMAGE, -8),
-  locked(charDef('Abóbora Blindada', '🎃', 'Lenta, mas aguenta tudo.', W.MARTELO, S.HP, 8, S.ARMOR, 4, S.SPEED, -10, S.ATK_SPEED, -10), UNLOCK_WAVE, 10),
-  locked(charDef('Pepino Arqueiro', '🥒', 'Mira de longe, foge de perto.', W.ARCO, S.CRIT, 10, S.RANGE, 60, S.HP, -4), UNLOCK_KILLS, 2000),
-  locked(charDef('Cogumelo Místico', '🍄', 'Magia gelada da floresta.', W.GELO, S.ELEMENTAL, 3, S.REGEN, 3, S.LUCK, 10, S.HP, -2), UNLOCK_WINS, 1),
+  hero(charDef('Batata Básica', '🥔', 'Sem frescura. Equilibrada.', W.SOCO, S.HP, 2, S.HARVEST, 2), 'potato', 'Um pouco de tudo.'),
+  hero(charDef('Tomatão', '🍅', 'Grandão e brigão.', W.ESPADA, S.HP, 5, S.MELEE, 3, S.ATK_SPEED, -5, S.SPEED, -5), 'viking', 'Muita vida e força corpo a corpo.'),
+  hero(charDef('Cenoura Ninja', '🥕', 'Rápida e esquiva.', W.FACA, S.SPEED, 10, S.DODGE, 10, S.CRIT, 5, S.HP, -3), 'ninja', 'Velocidade, esquiva e crítico.'),
+  hero(charDef('Milho Atirador', '🌽', 'Pipoca à distância!', W.PISTOLA, S.RANGED, 2, S.RANGE, 40, S.MELEE, -2), 'cowboy', 'Dano e alcance à distância.'),
+  hero(charDef('Pimenta Ardida', '🌶️', 'Tudo pega fogo.', W.CAJADO, S.ELEMENTAL, 2, S.ATK_SPEED, 10, S.ARMOR, -2), 'flame', 'Dano elemental: queima tudo.'),
+  hero(charDef('Berinjela Sortuda', '🍆', 'Nasceu virada pra lua.', W.ESTILINGUE, S.LUCK, 25, S.HARVEST, 8, S.DAMAGE, -8), 'lucky', 'Sorte e colheita, menos dano.'),
+  locked(hero(charDef('Abóbora Blindada', '🎃', 'Lenta, mas aguenta tudo.', W.MARTELO, S.HP, 8, S.ARMOR, 4, S.SPEED, -10, S.ATK_SPEED, -10), 'knight', 'Armadura e vida, bem lenta.'),
+    'Chegue na onda 10', (r) => r.bestWave >= 10),
+  locked(hero(charDef('Pepino Arqueiro', '🥒', 'Mira de longe, foge de perto.', W.ARCO, S.CRIT, 10, S.RANGE, 60, S.HP, -4), 'archer', 'Crítico e alcance, pouca vida.'),
+    'Derrote 2000 insetos (no total)', (r) => r.totalKills >= 2000),
+  locked(hero(charDef('Cogumelo Místico', '🍄', 'Magia gelada da floresta.', W.GELO, S.ELEMENTAL, 3, S.REGEN, 3, S.LUCK, 10, S.HP, -2), 'wizard', 'Elemental, regeneração e sorte.'),
+    'Vença 1 partida', (r) => r.wins >= 1),
+  locked(hero(charDef('Cyborg Cebola', '🧅', 'Metade cebola, metade máquina.', W_LASER, S.HP, 4, S.ARMOR, 2, S.RANGED, 3),
+    'cyborg', 'Só o Canhão Laser, com mira e tiro MANUAIS. Atire até 5 s seguidos; depois superaquece e esfria (quanto mais atirou, mais demora). Itens exclusivos melhoram o canhão e o corpo.', 'laser'),
+    'Derrote 10000 insetos e vença no Pesadelo', (r) => r.totalKills >= 10000 && r.bestDiffWon >= 3),
+  locked(hero(charDef('Vampiro Kiwi', '🥝', 'Bebe o suco dos insetos.', W.FACA, S.DODGE, 10, S.LIFESTEAL, 2, S.HP, -2),
+    'vampire', 'Ataques corpo a corpo têm +30% de roubo de vida. +10% de esquiva.', 'vampire'),
+    'Chegue a 50% de roubo de vida numa partida e vença', (r) => !!(r.ach && r.ach.vamp)),
+  locked(hero(charDef('Alien Hala', '🍍', 'Veio de outra horta... de outro planeta.', W.RAIO, S.RANGE, 50),
+    'alien', 'Segura 8 armas com tentáculos tecnológicos, +50 de alcance e só encontra itens Alien (melhores).', 'alien'),
+    'Vença com todas as armas no nível IV e mais de 100 de alcance', (r) => !!(r.ach && r.ach.alien)),
+  locked(hero(charDef('Melancia Minadora', '🍉', 'Deixa um rastro explosivo.', W.ESTILINGUE, S.HP, 4, S.ELEMENTAL, 2, S.SPEED, -5),
+    'miner', 'Planta minas de semente enquanto anda. Elas explodem quando um inseto chega perto.', 'mines'),
+    'Vença no Difícil (ou mais)', (r) => r.bestDiffWon >= 2),
+  locked(hero(charDef('Mirtilo Invocador', '🫐', 'Nunca luta sozinho.', W.GELO, S.ELEMENTAL, 1, S.LUCK, 5, S.HP, -2, S.MELEE, -2),
+    'summoner', 'Mirtilinhos voam em volta e atiram sozinhos. Ganha mais um a cada 4 níveis (até 6).', 'minions'),
+    'Jogue 10 partidas', (r) => r.gamesPlayed >= 10),
+  locked(hero(charDef('Coco Rolante', '🥥', 'Casca dura, sem freio.', W.SOCO, S.HP, 4, S.ARMOR, 5, S.SPEED, 10, S.ATK_SPEED, -15),
+    'racer', 'Atropela os insetos: andando, quem encosta leva dano (mais rápido = mais dano, armadura também ajuda).', 'ram'),
+    'Colete 20000 sementes (no total)', (r) => r.totalSeeds >= 20000),
 ];
 
-const AI_CHASE = 0, AI_SHOOT = 1, AI_CHARGE = 2, AI_BOSS_SNAIL = 3, AI_BOSS_ANT = 4, AI_ZIGZAG = 5;
+const AI_CHASE = 0, AI_SHOOT = 1, AI_CHARGE = 2, AI_BOSS_SNAIL = 3, AI_BOSS_ANT = 4, AI_ZIGZAG = 5, AI_BOSS_BEETLE = 6;
 function enemyDef(name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss) {
   return { name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss };
 }
@@ -155,17 +210,23 @@ const E = {
   FORMIGA_IMPERATRIZ: enemyDef('Formiga Imperatriz', '🐜', AI_BOSS_ANT, 5000, 95, 8, 0, 70, 80, 20, true),
 };
 E.MARIPOSA = enemyDef('Mariposa', '🦋', AI_ZIGZAG, 4, 150, 1, 0.5, 17, 1, 4, false);
+E.BESOURO_INFERNAL = enemyDef('Besouro Infernal', '🪲', AI_BOSS_BEETLE, 9000, 105, 10, 0, 76, 120, 35, true);
+const BOSSES = [E.LESMA_RAINHA, E.FORMIGA_IMPERATRIZ, E.BESOURO_INFERNAL];
 const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO, E.MARIPOSA];
 
-// Dificuldades
-const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo'];
-const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀'];
+// Dificuldades (as duas últimas são novas: Inferno tem 35 ondas e visual infernal; Infinito não acaba)
+const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo', 'Inferno', 'Infinito'];
+const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀', '😈', '♾️'];
 const DIFF_DESC = [
   'Inimigos mais fracos. Bom pra aprender.',
   'O jogo como ele deve ser.',
   'Inimigos mais fortes e mais numerosos.',
   'Mais elites e muito mais dano. Boa sorte!',
+  'A dificuldade máxima: 35 ondas numa horta em chamas.',
+  'Pesadelo sem fim: até onde você chega?',
 ];
-const DIFF_HP = [0.6, 1.15, 1.4, 1.7];
-const DIFF_DMG = [0.6, 1.15, 1.45, 1.8];
-const DIFF_SPAWN = [1.15, 1, 0.9, 0.8];
+const DIFF_HP = [0.6, 1.15, 1.4, 1.7, 2.0, 1.7];
+const DIFF_DMG = [0.6, 1.15, 1.45, 1.8, 2.1, 1.8];
+const DIFF_SPAWN = [1.15, 1, 0.9, 0.8, 0.72, 0.8];
+const DIFF_WAVES = [20, 20, 20, 20, 35, 0]; // 0 = infinito
+const DIFF_INFERNO = 4, DIFF_ENDLESS = 5;

@@ -15,24 +15,44 @@ const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "
 /** Guarda configurações, recordes e a partida salva no navegador. */
 class Prefs {
   constructor() {
-    this.data = { sound: true, music: true, bestWave: 0, wins: 0, totalKills: 0, bestDiffWon: -1, lastChar: 0, lastDiff: 1, savedRun: null };
+    this.data = {
+      sound: true, music: true, bestWave: 0, wins: 0, totalKills: 0, bestDiffWon: -1, lastChar: 0, lastDiff: 1, savedRun: null,
+      gamesPlayed: 0, totalSeeds: 0, ach: {}, bestEndless: 0,
+    };
     try { Object.assign(this.data, JSON.parse(localStorage.getItem('horta_hostil') || '{}')); } catch (e) { /* sem armazenamento */ }
+    if (!this.data.ach || typeof this.data.ach !== 'object') this.data.ach = {};
+    this.onProgress = null; // a conta online é avisada quando o progresso muda
   }
   save() { try { localStorage.setItem('horta_hostil', JSON.stringify(this.data)); } catch (e) { /* ignora */ } }
-  recordRun(won, wave, kills, diff) {
+  /** info = game.runInfo(won) */
+  recordRun(info) {
     const d = this.data;
-    if (wave > d.bestWave) d.bestWave = wave;
-    if (won) { d.wins++; if (diff > d.bestDiffWon) d.bestDiffWon = diff; }
-    d.totalKills += kills || 0;
+    if (info.wave > d.bestWave) d.bestWave = info.wave;
+    if (info.diff === DIFF_ENDLESS && info.wave > d.bestEndless) d.bestEndless = info.wave;
+    if (info.won) { d.wins++; if (info.diff > d.bestDiffWon) d.bestDiffWon = info.diff; }
+    d.totalKills += info.kills || 0;
+    d.totalSeeds += info.seeds || 0;
+    d.gamesPlayed++;
+    if (info.vamp) d.ach.vamp = true;
+    if (info.alien) d.ach.alien = true;
     d.savedRun = null;
     this.save();
+    if (this.onProgress) this.onProgress();
   }
-  saveRun(str) { if (str) { this.data.savedRun = str; this.save(); } }
-  clearRun() { this.data.savedRun = null; this.save(); }
+  saveRun(str) { if (str && str !== this.data.savedRun) { this.data.savedRun = str; this.save(); if (this.onProgress) this.onProgress(); } }
+  clearRun() { if (this.data.savedRun) { this.data.savedRun = null; this.save(); if (this.onProgress) this.onProgress(); } }
 }
 
 const RANDOM_CHAR = -1;
+const WEBSITE_URL = 'https://mello13256.github.io/Projeto-apk-random/';
+/** Abre um link fora do jogo (no app Android, abre o navegador). */
+function openExternal(url) {
+  if (typeof window !== 'undefined' && window.HortaAndroid && window.HortaAndroid.openUrl) window.HortaAndroid.openUrl(url);
+  else window.open(url, '_blank');
+}
+const DIFF_COLORS = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A', '#FF3D00', '#C77DFF'];
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+const IS_APP = typeof window !== 'undefined' && !!window.HortaAndroid; // rodando dentro do APK
 const IS_STANDALONE = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
 
 /** Emojis viram imagens (com cache) para desenhar rápido. */
@@ -207,7 +227,8 @@ class Ui {
   runEnded(won, wave) {
     const g = this.game;
     const before = this.unlockedChars();
-    this.prefs.recordRun(won, wave, g.kills, g.difficulty);
+    this.prefs.recordRun(g.runInfo(won));
+    void wave;
     const after = this.unlockedChars();
     this.newUnlocks = CHARS.filter((c, i) => !before[i] && after[i]).map((c) => c.name).join(', ');
   }
@@ -255,15 +276,46 @@ class Ui {
     return [x, y];
   }
 
+  /** O jogador deste computador usa mira manual (Cyborg Cebola)? */
+  manualAim() { const p = this.game.player; return !!p && p.kind === 'laser' && this.game.state === 'PLAYING'; }
+
   onDown(id, x, y) {
     const b = this.hit(x, y);
     this.down.set(id, b ? { action: b.action, arg: b.arg } : null);
     const g = this.game;
-    if (!b && g.state === 'PLAYING' && !this.menuOpen() && !this.joy) this.joy = { id, ox: x, oy: y, x, y };
+    if (b || g.state !== 'PLAYING' || this.menuOpen()) return;
+    if (this.manualAim()) {
+      // Cyborg: mouse = mira e tiro; no toque, o lado direito da tela é o "analógico" da mira
+      if (id === 'mouse') { this.mouseHeld = true; return; }
+      if (x > this.vw / 2 && !this.aimJoy) { this.aimJoy = { id, ox: x, oy: y, x, y }; return; }
+    }
+    if (!this.joy) this.joy = { id, ox: x, oy: y, x, y };
+  }
+
+  /** Mira manual: {aimAng, fire}. Chamado a cada passo do jogo. */
+  aimInput() {
+    const p = this.game.player;
+    if (!this.manualAim() || this.menuOpen() || !p.alive) return { aimAng: p ? p.aimAng : 0, fire: false };
+    const aj = this.aimJoy;
+    if (aj) {
+      const dx = aj.x - aj.ox, dy = aj.y - aj.oy;
+      if (Math.hypot(dx, dy) > 12) this.aimAng = Math.atan2(dy, dx);
+      return { aimAng: this.aimAng || 0, fire: true };
+    }
+    if (!this.touch && this.mouseX >= 0) {
+      this.aimAng = Math.atan2(this.mouseY + this.cam.y - p.y, this.mouseX + this.cam.x - p.x);
+    }
+    return { aimAng: this.aimAng || 0, fire: !!this.mouseHeld || this.keys.has('Space') };
   }
 
   onMove(id, x, y) {
     if (id === 'mouse') { this.mouseX = x; this.mouseY = y; }
+    const aj = this.aimJoy;
+    if (aj && aj.id === id) {
+      aj.x = x; aj.y = y;
+      const dx = aj.x - aj.ox, dy = aj.y - aj.oy, d = Math.hypot(dx, dy), max = 90;
+      if (d > max) { const k = (d - max) / d; aj.ox += dx * k; aj.oy += dy * k; }
+    }
     const j = this.joy;
     if (j && j.id === id) {
       j.x = x; j.y = y;
@@ -273,6 +325,8 @@ class Ui {
   }
 
   onUp(id, x, y) {
+    if (id === 'mouse') this.mouseHeld = false;
+    if (this.aimJoy && this.aimJoy.id === id) { this.aimJoy = null; return; }
     if (this.joy && this.joy.id === id) { this.joy = null; return; }
     const d = this.down.get(id);
     this.down.delete(id);
@@ -282,7 +336,7 @@ class Ui {
     else this.disabledTap(b.action, b.arg);
   }
 
-  releaseAll() { this.joy = null; this.down.clear(); this.keys.clear(); }
+  releaseAll() { this.joy = null; this.aimJoy = null; this.mouseHeld = false; this.down.clear(); this.keys.clear(); }
 
   onKey(code) {
     const g = this.game;
@@ -301,6 +355,10 @@ class Ui {
         else if (code === 'KeyM') this.doAction('MUSIC');
         else if (code === 'KeyR') this.doAction('RANKING');
         else if (code === 'KeyO') this.doAction('MP');
+        break;
+      case 'ACCOUNT':
+      case 'POLLS':
+        if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
         break;
       case 'MP_MENU':
         if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
@@ -324,7 +382,7 @@ class Ui {
       case 'CHAR_SELECT':
         if (code === 'ArrowLeft' || code === 'KeyA') pickSlot((sel + slots - 1) % slots);
         else if (code === 'ArrowRight' || code === 'KeyD') pickSlot((sel + 1) % slots);
-        else if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowDown' || code === 'KeyS') pickSlot((sel + 5) % slots);
+        else if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowDown' || code === 'KeyS') pickSlot((sel + 8) % slots);
         else if (code === 'KeyQ') this.doAction('DIFF', -1);
         else if (code === 'KeyE') this.doAction('DIFF', 1);
         else if (ok) this.doAction('START');
@@ -347,6 +405,10 @@ class Ui {
         else if (num !== undefined) this.doAction('BUY', num);
         else if (code === 'KeyR') this.doAction('REROLL');
         else if (ok) this.doAction('NEXT');
+        break;
+      case 'DUEL_END':
+        if (ok) this.doAction('MP_BACK_LOBBY');
+        else if (code === 'Escape') this.doAction('QUIT');
         break;
       case 'GAME_OVER':
       case 'VICTORY':
@@ -382,6 +444,18 @@ class Ui {
         if (this.touch) enterMobileFullscreen();
         break;
       case 'APK': location.href = 'HortaHostil.apk'; break;
+      case 'SITE': openExternal(WEBSITE_URL); break;
+      case 'POLLS': this.openPolls(); break;
+      case 'POLL_PAGE': this.polls.page += arg; break;
+      case 'VOTE': this.votePoll(Math.floor(arg / 100), arg % 100); break;
+      case 'ACCOUNT': this.openAccount(); break;
+      case 'ACC_CREATE': this.accountCreate(); break;
+      case 'ACC_LOGIN': this.accountLogin(); break;
+      case 'ACC_SYNC':
+        this.account.pull().then(() => this.account.push()).then(() => this.showToast('Progresso sincronizado ☁️'), () => this.showToast('Não deu pra sincronizar agora.'));
+        break;
+      case 'ACC_LOGOUT': this.account.logout(); this.showToast('Você saiu da conta. O progresso continua neste aparelho.', 3); break;
+      case 'REPORT': this.openReport(arg === 1); break;
       case 'MP': this.newUnlocks = ''; g.state = 'MP_MENU'; if (this.touch) enterMobileFullscreen(); break;
       case 'MP_CREATE': this.mpCreate(); break;
       case 'MP_JOIN': this.mpJoin(null); break;
@@ -402,6 +476,7 @@ class Ui {
         if (this.mp.isHost()) { this.difficulty = (this.mp.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length; this.mp.setDiff(this.difficulty); }
         break;
       case 'LOBBY_START': if (!this.mp.startGame()) this.showToast(this.mp.lobbyHint()); break;
+      case 'LOBBY_MODE': this.mp.setMode(this.mp.mode === 'pvp' ? 'coop' : 'pvp'); break;
       case 'LOBBY_LEAVE': this.mp.leave(); g.state = 'MP_MENU'; break;
       case 'MP_BACK_LOBBY': this.newUnlocks = ''; this.mp.backToLobby(); break;
       case 'UNREADY': this.mp.setReady(false); break;
@@ -466,7 +541,8 @@ class Ui {
       case 'REROLL': if (!g.rerollShop()) this.showToast('Sementes insuficientes!'); break;
       case 'NEXT':
         this.popupWeapon = -1; this.tipItem = null; this.joy = null;
-        if (g.coop) this.mp.setReady(true); else g.nextWave();
+        if (g.pvp === 'prep') { if (g.prepFinished()) this.mp.pvpReady(); else g.nextWave(); }
+        else if (g.coop) this.mp.setReady(true); else g.nextWave();
         break;
       case 'WEAPON': this.popupWeapon = arg; break;
       case 'SELL':
@@ -531,7 +607,10 @@ class Ui {
         if (this.menuOpen()) this.drawPause(); else this.drawHud();
         break;
       case 'MP_MENU': this.drawMpMenu(); break;
+      case 'ACCOUNT': this.drawAccount(); break;
+      case 'POLLS': this.drawPolls(); break;
       case 'LOBBY': this.drawLobby(); break;
+      case 'DUEL_END': this.drawDuelEnd(); break;
       case 'LEVEL_UP': this.drawLevelUp(); break;
       case 'CRATE': this.drawCrate(); break;
       case 'RANKING': this.drawRanking(); break;
@@ -556,40 +635,49 @@ class Ui {
   drawMenu() {
     this.drawMenuBackground();
     const cx = this.vw / 2, d = this.prefs.data;
+    const n = CHARS.length, step = Math.min(78, (this.vw - 80) / n);
     CHARS.forEach((c, i) => {
-      const x = cx + (i - (CHARS.length - 1) / 2) * 88;
-      this.emoji(c.icon, x, 112 + Math.sin(this.time * 3 + i) * 10, 68);
+      const x = cx + (i - (n - 1) / 2) * step;
+      this.drawHero(c, x, 74 + Math.sin(this.time * 3 + i) * 8, Math.min(58, step * 0.85), { facingLeft: i < n / 2, lookX: 0, lookY: 0.3 });
     });
-    this.text('HORTA HOSTIL', cx, 250, 92, C.GOLD, 'center');
-    this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 298, 26, '#E8F5D0', 'center');
+    this.text('HORTA HOSTIL', cx, 182, 84, C.GOLD, 'center');
+    this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 222, 24, '#E8F5D0', 'center');
     const big = d.savedRun
       ? [['CONTINUAR', 'CONTINUE', C.GREEN], ['NOVO JOGO', 'PLAY', C.ORANGE], ['👥 MULTIPLAYER', 'MP', C.BLUE]]
       : [['JOGAR', 'PLAY', C.GREEN], ['👥 MULTIPLAYER', 'MP', C.BLUE]];
     const bg = 20, bbw = Math.min(340, (this.vw - 80 - bg * (big.length - 1)) / big.length);
     const bbx = cx - (bbw * big.length + bg * (big.length - 1)) / 2;
-    big.forEach(([label, action, color], i) => this.button(bbx + i * (bbw + bg), 335, bbw, 90, label, action, 0, color, true, 40));
+    big.forEach(([label, action, color], i) => this.button(bbx + i * (bbw + bg), 245, bbw, 84, label, action, 0, color, true, 38));
     if (d.savedRun) {
       let wave = '?';
       try { wave = JSON.parse(d.savedRun).wave; } catch (e) { /* ignora */ }
-      this.text('depois da onda ' + wave, bbx + bbw / 2, 446, 20, '#CFE3B8', 'center');
+      this.text('depois da onda ' + wave, bbx + bbw / 2, 348, 19, '#CFE3B8', 'center');
     }
     const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
-    const showApk = IS_ANDROID && !IS_STANDALONE;
-    const btns = [
-      ['🏆 Ranking', 'RANKING', true],
+    const showApk = IS_ANDROID && !IS_STANDALONE && !IS_APP;
+    const acc = this.account && this.account.user;
+    const row1 = [
+      ['🏆 Ranking', 'RANKING', true, '#B8860B'],
+      ['🗳️ Enquetes', 'POLLS', true, '#7B4FB0'],
+      [acc ? '👤 ' + acc.name : '👤 Entrar / Conta', 'ACCOUNT', true, '#2E7D9A'],
+      ['🐞 Relatar bug', 'REPORT', true, '#A0522D'],
+    ];
+    const row2 = [
       [d.sound ? 'Som: SIM' : 'Som: NÃO', 'SOUND', true],
       [d.music ? 'Música: SIM' : 'Música: NÃO', 'MUSIC', true],
-      showApk ? ['Baixar app Android', 'APK', true] : ['Tela cheia', 'FULLSCREEN', fsOk],
+      IS_APP ? ['Abrir o site', 'SITE', true] : showApk ? ['Baixar app Android', 'APK', true] : ['Tela cheia', 'FULLSCREEN', fsOk],
       ['Como jogar', 'HELP', true],
     ];
-    const gap = 14, bw = Math.min(200, (this.vw - 60 - gap * 4) / 5), bx = cx - (bw * 5 + gap * 4) / 2;
-    const colors = { RANKING: '#B8860B', APK: '#2E7D9A' };
-    btns.forEach(([label, action, en], i) => this.button(bx + i * (bw + gap), 465, bw, 62, label, action, 0, colors[action] || C.GRAY, en, 24));
-    this.text('Melhor onda: ' + d.bestWave + '   •   Vitórias: ' + d.wins + '   •   Insetos derrotados: ' + d.totalKills, cx, 580, 24, '#CFE3B8', 'center');
+    const gap = 14, bw = Math.min(250, (this.vw - 60 - gap * 3) / 4), bx = cx - (bw * 4 + gap * 3) / 2;
+    row1.forEach(([label, action, en, col], i) => this.button(bx + i * (bw + gap), 362, bw, 62, label, action, 0, col, en, 24));
+    row2.forEach(([label, action, en], i) => this.button(bx + i * (bw + gap), 436, bw, 56, label, action, 0, action === 'APK' ? C.BLUE : C.GRAY, en, 22));
+    this.text('Melhor onda: ' + d.bestWave + '   •   Vitórias: ' + d.wins + '   •   Insetos derrotados: ' + d.totalKills, cx, 540, 23, '#CFE3B8', 'center');
     const unlocked = this.unlockedChars().filter((u) => u).length;
-    this.text('Personagens liberados: ' + unlocked + '/' + CHARS.length, cx, 618, 22, '#B8CFA0', 'center');
+    this.text('Personagens liberados: ' + unlocked + '/' + CHARS.length + (d.bestEndless ? '   •   Recorde no Infinito: onda ' + d.bestEndless : ''), cx, 574, 21, '#B8CFA0', 'center');
+    this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
+      : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  O: multiplayer  •  R: ranking  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v2.3', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('Projeto escolar • feito com JavaScript puro • v3.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -681,8 +769,7 @@ class Ui {
       }
       const mine = r.id === mp.pid;
       this.roundRect(x, y0, cw, ch, 18, mine ? '#33442A' : '#2A2116', SLOT_COLORS[i], mine ? 5 : 3);
-      this.emoji(CHARS[r.char].icon, x + cw / 2, y0 + 50, 70);
-      this.drawEyes(x + cw / 2, y0 + 48, 0.8, 0, 0);
+      this.drawHero(CHARS[r.char], x + cw / 2, y0 + 54, 64, { lookX: 0, lookY: 0.3, facingLeft: i % 2 === 1 });
       this.textFit(r.name + (mine ? ' (você)' : ''), x + cw / 2, y0 + 112, 22, cw - 16, '#FFFFFF');
       this.textFit(CHARS[r.char].name, x + cw / 2, y0 + 138, 17, cw - 16, '#FFE08A');
       const st = r.host ? '👑 Dono da sala' : r.ready ? '✔ Pronto' : '⏳ Escolhendo...';
@@ -706,16 +793,22 @@ class Ui {
     let info = cd.name + ' • Arma: ' + cd.startWeapon.name;
     for (let m = 0; m < cd.mods.length; m += 2) info += ' • ' + Stat.format(cd.mods[m], cd.mods[m + 1]);
     this.textFit(info, cx, 470, 20, vw - 60, '#E8F5D0');
-    // dificuldade
-    const diffColor = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A'];
+    // modo (cooperativo ou PvP) e dificuldade
+    const half = (vw - 80) / 2, mx = 30, dx = 50 + half;
+    const pvp = mp.mode === 'pvp';
+    if (host) this.button(mx, 488, half, 74, '', 'LOBBY_MODE', 0, pvp ? '#8E2B2B' : '#2E6B3A', true, 20);
+    else this.roundRect(mx, 488, half, 74, 16, pvp ? 'rgba(142,43,43,0.6)' : 'rgba(46,107,58,0.6)');
+    this.textFit('Modo: ' + (pvp ? '⚔️ PvP (todos contra todos)' : '🤝 Cooperativo') + (host ? '  (toque pra trocar)' : ''), mx + half / 2, 518, 23, half - 20, '#FFFFFF');
+    this.textFit(pvp ? '15 rodadas pra se preparar, depois duelo numa arena que fecha' : 'Todos juntos contra os insetos', mx + half / 2, 546, 16, half - 20, '#FFE0D0');
+    const diffColor = DIFF_COLORS;
     const dtx = DIFF_ICONS[mp.diff] + ' ' + DIFF_NAMES[mp.diff];
+    this.roundRect(dx, 488, half, 74, 16, 'rgba(0,0,0,0.4)');
     if (host) {
-      this.button(cx - 260, 492, 56, 64, '◀', 'LOBBY_DIFF', -1, C.GRAY, true, 28);
-      this.button(cx + 204, 492, 56, 64, '▶', 'LOBBY_DIFF', 1, C.GRAY, true, 28);
+      this.button(dx, 488, 50, 74, '◀', 'LOBBY_DIFF', -1, C.GRAY, true, 26);
+      this.button(dx + half - 50, 488, 50, 74, '▶', 'LOBBY_DIFF', 1, C.GRAY, true, 26);
     }
-    this.roundRect(cx - 196, 490, 392, 70, 16, 'rgba(0,0,0,0.4)');
-    this.textFit('Dificuldade: ' + dtx, cx, 522, 26, 380, diffColor[mp.diff]);
-    this.textFit(DIFF_DESC[mp.diff], cx, 548, 16, 380, '#CFE3B8');
+    this.textFit('Dificuldade: ' + dtx, dx + half / 2, 520, 24, half - 120, diffColor[mp.diff]);
+    this.textFit(DIFF_DESC[mp.diff], dx + half / 2, 546, 15, half - 120, '#CFE3B8');
     // rodapé
     const by = VH - 104;
     this.button(30, by + 8, 180, 76, 'Sair', 'LOBBY_LEAVE', 0, C.GRAY, true, 30);
@@ -730,47 +823,65 @@ class Ui {
   // --- Personagens ---
 
   drawCharSelect() {
-    this.text('ESCOLHA SEU LEGUME', this.vw / 2, 58, 44, C.GOLD, 'center');
+    this.text('ESCOLHA SEU LEGUME', this.vw / 2, 50, 40, C.GOLD, 'center');
     const unlocked = this.unlockedChars();
-    const cols = 5, gap = 14, vw = this.vw;
-    const cw = (vw - 60 - gap * (cols - 1)) / cols, ch = 252;
+    const cols = 8, gap = 10, vw = this.vw;
+    const cw = (vw - 60 - gap * (cols - 1)) / cols, ch = 128;
     for (let i = 0; i <= CHARS.length; i++) {
-      const x = 30 + (i % cols) * (cw + gap), y = 82 + Math.floor(i / cols) * (ch + gap);
+      const x = 30 + (i % cols) * (cw + gap), y = 70 + Math.floor(i / cols) * (ch + gap);
       const random = i === CHARS.length;
       const sel = random ? this.selectedChar === RANDOM_CHAR : i === this.selectedChar;
       const open = random || unlocked[i];
       const hov = this.isHover(x, y, cw, ch);
-      this.roundRect(x, y, cw, ch, 18, sel ? '#3F5A26' : !open ? '#1E1A14' : hov ? '#3A2E1E' : '#2A2116',
+      this.roundRect(x, y, cw, ch, 16, sel ? '#3F5A26' : !open ? '#1E1A14' : hov ? '#3A2E1E' : '#2A2116',
         sel ? C.GOLD : open ? C.PANEL_BORDER : '#4A4038', sel ? 5 : 3);
       this.register(x, y, cw, ch, random ? 'RANDOM' : 'CHAR', i, true);
       const cx = x + cw / 2;
-      const bob = sel ? Math.sin(this.time * 6) * 4 : 0;
+      const bob = sel ? Math.sin(this.time * 6) * 3 : 0;
       if (random) {
-        this.emoji('🎲', cx, y + 52 + bob, 62);
-        this.text('Aleatório', cx, y + 112, 21, '#FFFFFF', 'center');
-        this.wrapped('Um legume liberado surpresa!', cx, y + 144, cw - 20, 17, '#BFD6A6', 'center');
+        this.emoji('🎲', cx, y + 52 + bob, 56);
+        this.textFit('Aleatório', cx, y + 112, 18, cw - 10, '#FFFFFF');
         continue;
       }
       const cd = CHARS[i];
       if (!open) {
         this.ctx.globalAlpha = 0.3;
-        this.emoji(cd.icon, cx, y + 52, 62);
+        this.emoji(cd.icon, cx, y + 52, 56);
         this.ctx.globalAlpha = 1;
-        this.emoji('🔒', cx + 26, y + 70, 32);
-        const ny = this.wrapped(cd.name, cx, y + 112, cw - 16, 20, '#9A9A9A', 'center');
-        this.wrapped(unlockText(cd), cx, ny + 8, cw - 20, 17, '#FFC870', 'center');
+        this.emoji('🔒', cx + 24, y + 70, 28);
+        this.textFit(cd.name, cx, y + 112, 16, cw - 10, '#9A9A9A');
         continue;
       }
-      this.emoji(cd.icon, cx, y + 52 + bob, 62);
-      if (sel) this.drawEyes(cx, y + 50 + bob, 0.8, 1, 0);
-      const ny = this.wrapped(cd.name, cx, y + 112, cw - 16, 20, '#FFFFFF', 'center');
-      this.textFit('Arma: ' + cd.startWeapon.name, cx, ny + 2, 16, cw - 14, '#FFE08A');
-      let ly = ny + 26;
+      this.drawHero(cd, cx, y + 54 + bob, 60, { facingLeft: false, lookX: sel ? 1 : 0, lookY: sel ? 0 : 0.3 });
+      this.textFit(cd.name, cx, y + 116, 16, cw - 10, '#FFFFFF');
+    }
+    // detalhes do escolhido
+    const py = 352, ph = 256;
+    this.panel(30, py, vw - 60, ph);
+    const idx = this.selectedChar;
+    if (idx === RANDOM_CHAR) {
+      this.emoji('🎲', 120, py + 120, 120);
+      this.text('Aleatório', 230, py + 70, 34, '#FFFFFF', 'left');
+      this.wrapped('Começa com um dos legumes que você já liberou, escolhido na sorte!', 230, py + 112, vw - 300, 22, '#E8F5D0', 'left');
+    } else {
+      const cd = CHARS[idx], open = unlocked[idx];
+      if (open) this.drawHero(cd, 120, py + 128, 140, { facingLeft: false, lookX: Math.cos(this.time), lookY: 0.2, bob: Math.sin(this.time * 3) * 0.03 });
+      else { this.ctx.globalAlpha = 0.35; this.emoji(cd.icon, 120, py + 128, 130); this.ctx.globalAlpha = 1; this.emoji('🔒', 160, py + 170, 50); }
+      const tx = 230, tw = vw - 60 - 220;
+      this.text(cd.name, tx, py + 48, 32, open ? C.GOLD : '#BBBBBB', 'left');
+      this.text(cd.tagline, tx + this.measure(cd.name, 32) + 16, py + 46, 20, '#CFE3B8', 'left');
+      this.text('Arma: ' + cd.startWeapon.icon + ' ' + cd.startWeapon.name, tx, py + 82, 20, '#FFE08A', 'left');
+      let mx = tx, my = py + 114;
       for (let m = 0; m < cd.mods.length; m += 2) {
-        const v = cd.mods[m + 1];
-        this.textFit(Stat.format(cd.mods[m], v), cx, ly, 16, cw - 14, v >= 0 ? '#8CF08C' : '#FF8080');
-        ly += 20;
+        const v = cd.mods[m + 1], t = Stat.format(cd.mods[m], v);
+        const w = this.measure(t, 18) + 26;
+        if (mx + w > tx + tw) { mx = tx; my += 26; }
+        this.roundRect(mx, my - 19, w - 8, 26, 10, 'rgba(0,0,0,0.3)');
+        this.text(t, mx + 9, my, 18, v >= 0 ? '#8CF08C' : '#FF8080', 'left');
+        mx += w;
       }
+      const ay = this.wrapped('⭐ ' + cd.ability, tx, my + 34, tw - 10, 19, '#FFFFFF', 'left');
+      if (!open) this.wrapped('🔒 Para liberar: ' + unlockText(cd), tx, ay + 6, tw - 10, 20, '#FFC870', 'left');
     }
     // linha de baixo: voltar, dificuldade, começar
     const by = VH - 98, narrow = vw < 1200;
@@ -782,7 +893,7 @@ class Ui {
     this.button(cx + half - 56, by + 8, 56, 72, '▶', 'DIFF', 1, C.GRAY, true, 30);
     const pw = half - 64;
     this.roundRect(cx - pw, by + 4, pw * 2, 80, 16, 'rgba(0,0,0,0.4)');
-    const diffColor = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A'];
+    const diffColor = DIFF_COLORS;
     let title = DIFF_ICONS[this.difficulty] + ' ' + DIFF_NAMES[this.difficulty];
     if (this.prefs.data.bestDiffWon >= this.difficulty) title += '  ✔';
     this.textFit(title, cx, by + 38, 28, pw * 2 - 16, diffColor[this.difficulty]);
@@ -798,11 +909,11 @@ class Ui {
     this.drawMenuBackground();
     this.text('🏆 RANKING ONLINE', cx, 62, 46, C.GOLD, 'center');
     // abas de dificuldade
-    const tw = Math.min(220, (vw - 80 - 3 * 12) / 4), tx = cx - (tw * 4 + 36) / 2;
+    const nt = DIFF_NAMES.length, tw = Math.min(200, (vw - 60 - (nt - 1) * 10) / nt), tx = cx - (tw * nt + (nt - 1) * 10) / 2;
     for (let i = 0; i < DIFF_NAMES.length; i++) {
       const sel = i === r.diff;
-      this.button(tx + i * (tw + 12), 88, tw, 58, DIFF_ICONS[i] + ' ' + DIFF_NAMES[i], 'RANK_TAB', i, sel ? '#4CAF50' : C.GRAY, true, 24);
-      if (sel) this.roundRect(tx + i * (tw + 12), 88, tw, 53, 16, null, C.GOLD, 4);
+      this.button(tx + i * (tw + 10), 88, tw, 58, DIFF_ICONS[i] + ' ' + DIFF_NAMES[i], 'RANK_TAB', i, sel ? '#4CAF50' : C.GRAY, true, 22);
+      if (sel) this.roundRect(tx + i * (tw + 10), 88, tw, 53, 16, null, C.GOLD, 4);
     }
     // lista (2 colunas de 10)
     const top = 168, rowH = 42, colW = Math.min(560, (vw - 90) / 2), x0 = cx - colW - 15;
@@ -850,7 +961,7 @@ class Ui {
     if (it) {
       const w = Math.min(420, areaW - 40), h = 360, x = cx - w / 2, y = 150;
       this.card(x, y, w, h, it.tier, false);
-      this.emoji(it.icon, cx, y + 80, 110);
+      this.itemIcon(it, cx, y + 80, 110);
       this.text(it.name, cx, y + 178, 34, TIER_COLOR[it.tier], 'center');
       this.text('Item • Raridade ' + TIER_NAMES[it.tier], cx, y + 208, 18, '#B0B0B0', 'center');
       let ly = y + 248;
@@ -859,7 +970,7 @@ class Ui {
         this.text(Stat.format(it.mods[m], v), cx, ly, 22, v >= 0 ? '#8CF08C' : '#FF8080', 'center');
         ly += 28;
       }
-      if (it.special >= 0) this.wrapped(it.specialText, cx, ly, w - 30, 20, '#FFE08A', 'center');
+      if (it.specialText) this.wrapped(it.specialText, cx, ly, w - 30, 20, '#FFE08A', 'center');
       const bw = Math.min(260, (areaW - 60) / 2);
       this.button(cx - bw - 10, VH - 120, bw, 84, this.touch ? 'Pegar' : 'Pegar (Enter)', 'CRATE_TAKE', 0, C.GREEN, true, 34);
       this.buttonSeed(cx + 10, VH - 120, bw, 84, g.crateRecyclePrice(), 'CRATE_RECYCLE', 0, C.ORANGE, true, this.touch ? 'Reciclar +' : 'Reciclar (R) +');
@@ -904,13 +1015,22 @@ class Ui {
         g.beginPath(); g.arc(x, y, 3.5, 0, Math.PI * 2); g.fill();
       }
     }
-    this.arena = c;
+    return c;
   }
 
-  drawWorld() {
-    if (!this.arena) this.buildArena();
-    const ctx = this.ctx, g = this.game, me = g.player, vw = this.vw;
-    // câmera: segue você (ou, se você caiu, o amigo vivo mais perto)
+  /** O mapa muda no Inferno. */
+  isInferno() { const g = this.game; return g.difficulty === DIFF_INFERNO && !g.pvp; }
+
+  arenaFor() {
+    this.arenas = this.arenas || {};
+    const key = this.isInferno() ? 'inferno' : 'normal';
+    if (!this.arenas[key]) this.arenas[key] = key === 'inferno' ? this.buildInfernoArena() : this.buildArena();
+    return this.arenas[key];
+  }
+
+  /** Câmera (sem a tremida): usada também para a mira com o mouse. */
+  updateCamera() {
+    const g = this.game, me = g.player, vw = this.vw;
     const focus = me.alive ? me : (g.nearestPlayer(me.x, me.y) || me);
     const margin = 70;
     let camX = WORLD_W + margin * 2 <= vw ? (WORLD_W - vw) / 2 : clamp(focus.x - vw / 2, -margin, WORLD_W - vw + margin);
@@ -920,21 +1040,35 @@ class Ui {
       camX = c.x + (camX - c.x) * k; camY = c.y + (camY - c.y) * k;
     }
     this.cam.x = camX; this.cam.y = camY;
+  }
+
+  drawWorld() {
+    const ctx = this.ctx, g = this.game, me = g.player, vw = this.vw;
+    const inferno = this.isInferno();
+    this.updateCamera();
+    let camX = this.cam.x, camY = this.cam.y;
     if (g.shake > 0 && !g.paused) {
       camX += (Math.random() - 0.5) * g.shake;
       camY += (Math.random() - 0.5) * g.shake;
     }
-    ctx.fillStyle = '#22301A';
+    ctx.fillStyle = inferno ? '#140605' : '#22301A';
     ctx.fillRect(0, 0, vw, VH);
     ctx.save();
     ctx.translate(-camX, -camY);
-    ctx.drawImage(this.arena, 0, 0);
+    ctx.drawImage(this.arenaFor(), 0, 0);
 
-    // cerca
-    ctx.lineWidth = 16; ctx.strokeStyle = '#6B4A26';
-    ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
-    ctx.lineWidth = 6; ctx.strokeStyle = '#8A6234';
-    ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
+    // cerca (no Inferno: muro de obsidiana em chamas)
+    if (inferno) {
+      ctx.lineWidth = 18; ctx.strokeStyle = '#1A0A0A';
+      ctx.strokeRect(-9, -9, WORLD_W + 18, WORLD_H + 18);
+      ctx.lineWidth = 4; ctx.strokeStyle = `rgba(255,${100 + Math.round(60 * Math.sin(this.time * 3))},0,0.9)`;
+      ctx.strokeRect(-1, -1, WORLD_W + 2, WORLD_H + 2);
+    } else {
+      ctx.lineWidth = 16; ctx.strokeStyle = '#6B4A26';
+      ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
+      ctx.lineWidth = 6; ctx.strokeStyle = '#8A6234';
+      ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
+    }
 
     // avisos de nascimento
     ctx.lineCap = 'round';
@@ -947,6 +1081,17 @@ class Ui {
       ctx.moveTo(t.x - s, t.y - s); ctx.lineTo(t.x + s, t.y + s);
       ctx.moveTo(t.x - s, t.y + s); ctx.lineTo(t.x + s, t.y - s);
       ctx.stroke();
+    }
+
+    // minas da Melancia
+    for (const m of g.mines) {
+      const armed = m.arm <= 0;
+      this.circle(m.x, m.y + 4, 11, 'rgba(0,0,0,0.3)');
+      this.circle(m.x, m.y, 10, '#2E7D32');
+      ctx.strokeStyle = '#A5D6A7'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(m.x, m.y, 7, -2.4, -0.6); ctx.stroke();
+      const blink = armed && Math.sin(this.time * 10 + m.x) > 0;
+      this.circle(m.x, m.y - 1, 3.5, blink ? '#FF3030' : armed ? '#7A1010' : '#555');
     }
 
     // coletáveis
@@ -984,12 +1129,15 @@ class Ui {
       ctx.beginPath(); ctx.ellipse(p.x, p.y + 23, 24, 7, 0, 0, Math.PI * 2); ctx.fill();
     }
 
-    for (const e of g.enemies) if (!e.dead) this.drawEnemy(e);
+    for (const e of g.enemies) if (!e.dead) this.drawEnemy(e, inferno);
     for (const p of g.players) {
       if (!p.alive) { this.drawGhost(p); continue; }
+      if (p.kind === 'alien') this.drawTentacles(p);
       this.drawPlayer(p);
-      for (const w of p.weapons) this.drawWeapon(w);
+      for (const w of p.weapons) this.drawWeapon(w, p.laser.heat);
+      if (p.kind === 'minions') this.drawMinions(p);
     }
+    for (const p of g.players) if (p.alive && p.kind === 'laser') this.drawLaser(p);
     if (g.coop) {
       for (const p of g.players) {
         if (p === me) continue;
@@ -1003,26 +1151,19 @@ class Ui {
 
     // projéteis
     for (const b of g.bullets) {
-      if (b.lightning) {
-        ctx.lineCap = 'round';
-        ctx.strokeStyle = '#FFE14A'; ctx.lineWidth = 7;
-        ctx.beginPath(); ctx.moveTo(b.x - b.vx * 0.03, b.y - b.vy * 0.03); ctx.lineTo(b.x, b.y); ctx.stroke();
-        ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3; ctx.stroke();
-      } else if (b.slow > 0) {
-        this.circle(b.x, b.y, b.radius * 1.7, 'rgba(128,216,255,0.4)');
-        this.circle(b.x, b.y, b.radius, '#E6FAFF');
-      } else if (b.burn > 0) {
-        this.circle(b.x, b.y, b.radius * 1.7, 'rgba(255,106,0,0.4)');
-        this.circle(b.x, b.y, b.radius, '#FFB040');
-      } else {
-        this.circle(b.x, b.y, b.radius + 2, '#1A1A1A');
-        this.circle(b.x, b.y, b.radius, b.explosion > 0 ? '#FF7A2A' : '#FFF3C4');
-      }
+      if (!b.wd && b.source && b.source.def) b.wd = b.source.def;
+      this.drawBullet(b);
     }
     for (const b of g.enemyBullets) {
-      this.circle(b.x, b.y, b.radius + 3, '#3A0A4A');
-      this.circle(b.x, b.y, b.radius, '#C24BFF');
-      this.circle(b.x, b.y, b.radius * 0.4, '#F5D6FF');
+      if (inferno) {
+        this.circle(b.x, b.y, b.radius + 4, 'rgba(255,80,0,0.35)');
+        this.circle(b.x, b.y, b.radius, '#FF6D00');
+        this.circle(b.x, b.y, b.radius * 0.45, '#FFF59D');
+      } else {
+        this.circle(b.x, b.y, b.radius + 3, '#3A0A4A');
+        this.circle(b.x, b.y, b.radius, '#C24BFF');
+        this.circle(b.x, b.y, b.radius * 0.4, '#F5D6FF');
+      }
     }
 
     // partículas
@@ -1037,33 +1178,118 @@ class Ui {
       }
     }
 
+    // duelo: a zona que fecha (fora dela é perigoso)
+    if (g.zone) this.drawZone(g.zone);
+
     // números de dano
     for (const t of g.texts) {
       ctx.globalAlpha = Math.min(1, t.life / t.maxLife * 2);
       this.text(t.text, t.x, t.y, t.size, t.color, 'center');
     }
     ctx.globalAlpha = 1;
+
+    // mira do laser com o mouse
+    if (me.alive && me.kind === 'laser' && !this.touch && this.mouseX >= 0) {
+      const mx = this.mouseX + this.cam.x, my = this.mouseY + this.cam.y;
+      ctx.strokeStyle = me.laser.over ? 'rgba(160,160,160,0.8)' : 'rgba(255,60,80,0.9)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(mx, my, 14, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mx - 22, my); ctx.lineTo(mx - 8, my); ctx.moveTo(mx + 8, my); ctx.lineTo(mx + 22, my);
+      ctx.moveTo(mx, my - 22); ctx.lineTo(mx, my - 8); ctx.moveTo(mx, my + 8); ctx.lineTo(mx, my + 22); ctx.stroke();
+    }
+    ctx.restore();
+    if (inferno) this.drawEmbers(camX, camY);
+  }
+
+  /** O feixe do canhão laser (com os feixes extras do Prisma). */
+  drawLaser(p) {
+    const g = this.game, L = p.laser;
+    if (!L.on) return;
+    const st = p.laserView || g.laserStats(p);
+    const beams = [[0, 1]];
+    for (let k = 1; k <= (p.laserView ? p.laserView.split : p.cy.split); k++) beams.push([0.22 * k, 0.8], [-0.22 * k, 0.8]);
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const [off, lm] of beams) {
+      const a = p.aimAng + off, c = Math.cos(a), s = Math.sin(a);
+      const x0 = p.x + c * 30, y0 = p.y + s * 30 + 4, len = st.range * lm;
+      const x1 = x0 + c * len, y1 = y0 + s * len;
+      const w = st.width * (off ? 0.6 : 1) * (1 + 0.15 * Math.sin(this.time * 40));
+      for (const [lw, col] of [[w * 2.4, 'rgba(255,30,60,0.18)'], [w * 1.3, 'rgba(255,60,90,0.55)'], [w * 0.45, 'rgba(255,230,235,0.95)']]) {
+        ctx.strokeStyle = col; ctx.lineWidth = lw;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+      this.circle(x0, y0, w * 0.9, 'rgba(255,200,210,0.8)');
+      this.circle(x1, y1, w * 0.7 + Math.random() * 4, 'rgba(255,120,140,0.6)');
+    }
     ctx.restore();
   }
 
-  drawEnemy(e) {
+  drawMinions(p) {
+    const g = this.game, n = g.minionCount(p);
+    for (let i = 0; i < n; i++) {
+      const [x, y] = g.minionPos(p, i, n);
+      const bob = Math.sin(this.time * 6 + i) * 2;
+      this.circle(x, y + 16, 7, 'rgba(0,0,0,0.2)');
+      const glow = this.ctx.createRadialGradient(x, y + bob, 2, x, y + bob, 18);
+      glow.addColorStop(0, 'rgba(124,140,255,0.5)'); glow.addColorStop(1, 'rgba(124,140,255,0)');
+      this.ctx.fillStyle = glow; this.ctx.beginPath(); this.ctx.arc(x, y + bob, 18, 0, Math.PI * 2); this.ctx.fill();
+      this.emoji('🫐', x, y + bob, 26);
+      this.drawEyes(x, y + bob - 1, 0.35, 0, 0);
+    }
+  }
+
+  drawZone(z) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-200, -200, WORLD_W + 400, WORLD_H + 400);
+    ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2, true);
+    ctx.fillStyle = 'rgba(120,0,20,0.42)';
+    ctx.fill('evenodd');
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = `rgba(255,${80 + Math.round(60 * Math.sin(this.time * 6))},80,0.9)`;
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.setLineDash([18, 14]); ctx.lineDashOffset = -this.time * 40;
+    ctx.beginPath(); ctx.arc(z.x, z.y, z.r - 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  drawEnemy(e, inferno) {
     const ctx = this.ctx;
     const size = e.radius * 2.5;
     const squash = Math.sin(e.anim * 10) * 0.06;
     let tint = null, ox = 0;
     if (e.flash > 0) tint = '#FFFFFF';
-    else if ((e.def.ai === AI_CHARGE && e.aiState === 1) || (e.def.ai === AI_BOSS_ANT && e.aiState === 2)) {
+    else if ((e.def.ai === AI_CHARGE && e.aiState === 1) || ((e.def.ai === AI_BOSS_ANT || e.def.ai === AI_BOSS_BEETLE) && e.aiState === 2)) {
       tint = 'rgba(255,32,32,0.6)';
       ox = (Math.random() - 0.5) * 6;
     } else if (e.slowTime > 0) tint = 'rgba(128,216,255,0.47)';
     else if (e.burnTime > 0) tint = 'rgba(255,106,0,0.53)';
     else if (e.elite) tint = 'rgba(255,196,0,0.33)';
+    else if (inferno) tint = 'rgba(220,30,0,0.3)';
+    if (inferno) { // aura de fogo
+      const g = ctx.createRadialGradient(e.x, e.y, e.radius * 0.4, e.x, e.y, e.radius * 1.6);
+      g.addColorStop(0, 'rgba(255,90,0,0.35)'); g.addColorStop(1, 'rgba(255,40,0,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 1.6, 0, Math.PI * 2); ctx.fill();
+    }
     if (e.elite) this.circle(e.x, e.y, e.radius * 1.25 + Math.sin(this.time * 8) * 3, 'rgba(255,196,0,0.33)');
     ctx.save();
     ctx.translate(e.x + ox, e.y);
     if (!e.facingLeft) ctx.scale(-1, 1);
     ctx.scale(1 + squash, 1 - squash);
     this.emoji(e.def.icon, 0, 0, size, tint);
+    if (inferno && !e.elite) { // chifrinhos
+      const r = e.radius;
+      ctx.fillStyle = '#2A0505';
+      for (const d of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(d * r * 0.25, -r * 0.75); ctx.quadraticCurveTo(d * r * 0.6, -r * 1.25, d * r * 0.62, -r * 1.35);
+        ctx.lineTo(d * r * 0.45, -r * 0.7); ctx.closePath(); ctx.fill();
+      }
+    }
     ctx.restore();
     if (e.elite) this.emoji('👑', e.x, e.y - e.radius * 1.2, 30);
     if (!e.def.boss && e.hp < e.maxHp) {
@@ -1076,25 +1302,16 @@ class Ui {
   }
 
   drawPlayer(p) {
-    const g = this.game, ctx = this.ctx;
-    if (p.iframes > 0 && g.waveTime > 1 && Math.floor(p.iframes * 20) % 2 === 0) return;
+    const g = this.game;
+    if (p.iframes > 0.15 && g.waveTime > 1 && Math.floor(p.iframes * 20) % 2 === 0) return;
     const bob = p.moving ? Math.sin(p.moveAnim) * 0.07 : Math.sin(this.time * 3) * 0.03;
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.scale(1 - bob * 0.5, 1 + bob);
-    ctx.save();
-    if (!p.facingLeft) ctx.scale(-1, 1);
-    this.emoji(p.character.icon, 0, 0, 68);
-    ctx.restore();
-    this.drawEyes(0, -4, 1, p.lookX, p.lookY);
-    ctx.restore();
+    this.drawHero(p.character, p.x, p.y, 68, { facingLeft: p.facingLeft, lookX: p.lookX, lookY: p.lookY, bob, moving: p.moving });
   }
 
   /** Jogador que caiu (multiplayer): fantasminha transparente até a próxima onda. */
   drawGhost(p) {
     const ctx = this.ctx;
-    ctx.globalAlpha = 0.35;
-    this.emoji(p.character.icon, p.x, p.y + Math.sin(this.time * 3 + p.slot) * 4, 60);
+    this.drawHero(p.character, p.x, p.y + Math.sin(this.time * 3 + p.slot) * 4, 60, { alpha: 0.35, facingLeft: p.facingLeft });
     ctx.globalAlpha = 0.85;
     this.emoji('👻', p.x + 22, p.y - 26 + Math.sin(this.time * 4) * 3, 30);
     ctx.globalAlpha = 1;
@@ -1137,68 +1354,6 @@ class Ui {
     }
   }
 
-  drawWeapon(w) {
-    const ctx = this.ctx, d = w.def;
-    const ang = w.attacking() ? Math.atan2(w.dirY, w.dirX) : w.angle;
-    ctx.save();
-    ctx.translate(w.tipX, w.tipY);
-    ctx.rotate(ang);
-    if (Math.cos(ang) < 0) ctx.scale(1, -1);
-    const tc = TIER_COLOR[w.tier];
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#1A1A1A';
-    switch (d.shape) {
-      case SHAPE_FIST:
-        this.circle(4, 0, 11, d.color); ctx.stroke();
-        this.circle(-6, 0, 4, tc);
-        break;
-      case SHAPE_BLADE: {
-        const len = d === W.LANCA ? 46 : d === W.ESPADA ? 38 : 26;
-        this.roundRect(-12, -3.5, 14, 7, 2, '#6B4423');
-        ctx.fillStyle = tc; ctx.fillRect(0, -6, 4, 12);
-        ctx.beginPath();
-        ctx.moveTo(4, -4); ctx.lineTo(4 + len - 8, -4); ctx.lineTo(4 + len, 0); ctx.lineTo(4 + len - 8, 4); ctx.lineTo(4, 4);
-        ctx.closePath();
-        ctx.fillStyle = d.color; ctx.fill();
-        ctx.strokeStyle = '#1A1A1A'; ctx.lineWidth = 3; ctx.stroke();
-        break;
-      }
-      case SHAPE_BOW:
-        ctx.strokeStyle = d.color; ctx.lineWidth = 5;
-        ctx.beginPath(); ctx.arc(0, 0, 18, -Math.PI / 2, Math.PI / 2); ctx.stroke();
-        ctx.strokeStyle = '#EEEEEE'; ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.moveTo(0, -18); ctx.lineTo(0, 18); ctx.stroke();
-        ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(16, 0); ctx.stroke();
-        this.circle(10, 0, 3, tc);
-        break;
-      case SHAPE_HAMMER:
-        this.roundRect(-14, -3.5, 30, 7, 2, '#6B4423');
-        this.roundRect(12, -14, 18, 28, 4, d.color, '#1A1A1A', 3);
-        this.circle(-10, 0, 3.5, tc);
-        break;
-      case SHAPE_GUN:
-        this.roundRect(-6, 0, 8, 12, 2, '#3A2A1A');
-        this.roundRect(-8, -6, 28, 10, 3, d.color, '#1A1A1A', 3);
-        this.circle(0, -1, 3, tc);
-        break;
-      case SHAPE_STAFF:
-        ctx.strokeStyle = '#6B4423'; ctx.lineWidth = 5; ctx.lineCap = 'round';
-        ctx.beginPath(); ctx.moveTo(-16, 0); ctx.lineTo(14, 0); ctx.stroke();
-        ctx.globalAlpha = 0.4;
-        this.circle(18, 0, 11 + Math.sin(this.time * 8) * 2, d.color);
-        ctx.globalAlpha = 1;
-        this.circle(18, 0, 7, d.color);
-        this.circle(-12, 0, 3, tc);
-        break;
-      default:
-        this.roundRect(-12, -8, 36, 15, 4, d.color, '#1A1A1A', 3);
-        this.roundRect(20, -9, 7, 17, 2, '#222222');
-        this.circle(-4, 0, 3.5, tc);
-    }
-    ctx.restore();
-  }
-
   // --- HUD ---
 
   drawHud() {
@@ -1225,20 +1380,32 @@ class Ui {
       this.emoji('📦', 34, 148, 30);
       this.text('x' + p.crates, 56, 158, 26, C.GOLD, 'left');
     }
-    if (g.coop) this.drawTeamList(18, p.crates > 0 ? 190 : 150);
+    if (g.pvp === 'prep') this.drawRivals(18, p.crates > 0 ? 190 : 150);
+    else if (g.coop) this.drawTeamList(18, p.crates > 0 ? 190 : 150);
 
-    this.text('ONDA ' + g.wave + (g.difficulty !== 1 ? '  •  ' + DIFF_NAMES[g.difficulty] : ''), vw / 2, 40, 28, '#FFFFFF', 'center');
+    const mw = g.maxWave();
+    if (g.pvp === 'duel') {
+      this.text('⚔️ DUELO', vw / 2, 40, 30, '#FF8A7A', 'center');
+      const t = Math.floor(g.duelTime);
+      this.text(Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'), vw / 2, 92, 46, '#FFFFFF', 'center');
+      if (p.kind === 'laser') this.drawHeatBar(p);
+    } else {
+    const wl = (g.pvp === 'prep' ? 'RODADA ' : 'ONDA ') + g.wave + (mw !== Infinity && mw !== MAX_WAVE || g.pvp ? '/' + mw : '');
+    this.text(wl + (g.difficulty !== 1 && !g.pvp ? '  •  ' + DIFF_NAMES[g.difficulty] : g.pvp ? '  •  PvP' : ''), vw / 2, 40, 28, '#FFFFFF', 'center');
+    if (p.kind === 'laser') this.drawHeatBar(p);
     const left = g.ending ? 0 : Math.ceil(Math.max(0, g.waveDuration - g.waveTime));
     this.text(String(left), vw / 2, 96, 56, left <= 5 ? '#FF6A5A' : '#FFFFFF', 'center');
+    }
 
     this.button(vw - 86, 16, 68, 68, 'II', 'PAUSE', 0, 'rgba(51,51,51,0.67)', true, 30);
-    if (g.coop && this.mp.isGuest()) {
+    if (g.coop && this.mp.isGuest() && g.pvp !== 'prep') {
       // ping: tempo de ida e volta até o dono da sala
       const ms = Math.round(this.mp.ping), direct = !!(this.mp.hostPeer && this.mp.hostPeer.isOpen());
       const color = !ms ? '#CFCFCF' : ms < 120 ? '#8CF08C' : ms < 250 ? '#FFE678' : '#FF8A7A';
       this.text((ms ? ms + ' ms' : '...') + (direct ? ' ⚡' : ' 🌐'), vw - 100, 60, 22, color, 'right');
     }
 
+    if (g.pvp === 'duel') this.drawDuelHud();
     const boss = g.boss;
     if (boss && !boss.dead) {
       const w = Math.min(700, vw * 0.55);
@@ -1246,7 +1413,7 @@ class Ui {
       this.text(boss.def.name, vw / 2, VH - 62, 24, '#FFFFFF', 'center');
     }
 
-    if (g.bannerTime > 0) {
+    if (g.bannerTime > 0 && g.pvp !== 'duel') {
       const a = Math.min(1, g.bannerTime * 2);
       const s = 1 + Math.max(0, g.bannerTime - 1.8) * 1.5;
       this.ctx.globalAlpha = a;
@@ -1254,7 +1421,7 @@ class Ui {
       this.ctx.globalAlpha = 1;
     }
 
-    if (g.coop && !p.alive && !g.ending) {
+    if (g.coop && !p.alive && !g.ending && !g.pvp) {
       this.text('Você caiu! 👻', vw / 2, VH * 0.62, 46, '#FF8A7A', 'center');
       this.text('Você volta na próxima onda. Torça pelos amigos!', vw / 2, VH * 0.62 + 40, 24, '#FFFFFF', 'center');
     }
@@ -1269,10 +1436,103 @@ class Ui {
       this.circle(j.ox, j.oy, R, 'rgba(255,255,255,0.2)');
       this.ctx.strokeStyle = 'rgba(255,255,255,0.4)'; this.ctx.lineWidth = 3; this.ctx.stroke();
       this.circle(j.ox + clamp(j.x - j.ox, -R, R), j.oy + clamp(j.y - j.oy, -R, R), 32, 'rgba(255,255,255,0.6)');
-    } else if (g.wave === 1 && g.waveTime < 6) {
-      const hint = this.touch ? 'Arraste o dedo para andar' : 'Use W A S D ou as setas para andar';
+    }
+    const aj = this.aimJoy;
+    if (aj) {
+      const R = 75;
+      this.circle(aj.ox, aj.oy, R, 'rgba(255,60,80,0.2)');
+      this.ctx.strokeStyle = 'rgba(255,90,110,0.6)'; this.ctx.lineWidth = 3; this.ctx.stroke();
+      this.circle(aj.ox + clamp(aj.x - aj.ox, -R, R), aj.oy + clamp(aj.y - aj.oy, -R, R), 32, 'rgba(255,90,110,0.7)');
+    }
+    if (!j && !aj && g.wave === 1 && g.waveTime < 7 && !g.pvp) {
+      let hint = this.touch ? 'Arraste o dedo para andar' : 'Use W A S D ou as setas para andar';
+      if (p.kind === 'laser') hint = this.touch ? 'Esquerda: andar  •  Direita: mirar e ATIRAR' : 'W A S D: andar  •  Mouse: mirar  •  Clique (ou Espaço): ATIRAR';
       this.text(hint, vw / 2, VH - 110, 30, 'rgba(255,255,255,0.8)', 'center');
     }
+  }
+
+  /** PvP (preparação): em que rodada estão os outros. */
+  drawRivals(x, y) {
+    for (const r of this.mp.roster) {
+      if (r.id === this.mp.pid) continue;
+      const [w, st] = (r.pv || '1|0').split('|');
+      this.emoji(CHARS[r.char].icon, x + 16, y + 14, 28);
+      this.text(r.name, x + 38, y + 12, 17, '#FFD0C0', 'left');
+      const label = st === '2' ? '⚔️ pronto' : st === '3' ? 'caiu na rodada ' + w : st === '1' ? 'loja da rodada ' + w : 'rodada ' + w + '/' + PVP_PREP_WAVES;
+      this.text(label, x + 38, y + 32, 15, st === '2' ? '#8CF08C' : '#E0E0E0', 'left');
+      y += 44;
+    }
+  }
+
+  /** Duelo: tempo, zona, contagem e a troca de atributos. */
+  drawDuelHud() {
+    const g = this.game, vw = this.vw, p = g.player;
+    const z = g.zone;
+    if (g.countdown > 3 && this.mp.swapInfo) this.drawSwapReveal();
+    else if (g.countdown > 0) {
+      const n = Math.ceil(g.countdown);
+      this.text(String(n), vw / 2, VH * 0.45, 120 + (g.countdown % 1) * 40, '#FFFFFF', 'center');
+    }
+    if (p.alive && z && Math.hypot(p.x - z.x, p.y - z.y) > z.r && g.countdown <= 0) {
+      this.text('⚠️ Volte pra dentro do círculo!', vw / 2, VH - 70, 30, '#FF6A5A', 'center');
+    }
+    if (!p.alive && g.state === 'PLAYING') this.text('Você caiu! Assista o fim do duelo 👻', vw / 2, VH * 0.62, 34, '#FF8A7A', 'center');
+    if (g.bannerTime > 0 && g.countdown <= 0) {
+      this.ctx.globalAlpha = Math.min(1, g.bannerTime * 2);
+      this.text(g.banner, vw / 2, VH * 0.36, 64, '#FF8A7A', 'center');
+      this.ctx.globalAlpha = 1;
+    }
+  }
+
+  drawSwapReveal() {
+    const info = this.mp.swapInfo, vw = this.vw;
+    const w = Math.min(760, vw - 60), h = 120 + info.rows.length * 46, x = vw / 2 - w / 2, y = 150;
+    this.panel(x, y, w, h);
+    const [a, b] = info.stats;
+    this.text('🔀 TROCA DE ATRIBUTOS!', vw / 2, y + 48, 36, C.GOLD, 'center');
+    this.text(Stat.ICONS[a] + ' ' + Stat.NAMES[a] + '   e   ' + Stat.ICONS[b] + ' ' + Stat.NAMES[b], vw / 2, y + 86, 24, '#FFFFFF', 'center');
+    const fmt = (s, v) => v + (Stat.PERCENT[s] ? '%' : '');
+    info.rows.forEach((r, i) => {
+      const ry = y + 126 + i * 46;
+      this.emoji(CHARS[r.char] ? CHARS[r.char].icon : '❓', x + 40, ry - 8, 34);
+      this.text(r.name, x + 66, ry, 22, SLOT_COLORS[r.slot % SLOT_COLORS.length], 'left');
+      const t = Stat.NAMES[a] + ' ' + fmt(a, r.before[0]) + ' → ' + fmt(a, r.after[0]) + '   •   ' + Stat.NAMES[b] + ' ' + fmt(b, r.before[1]) + ' → ' + fmt(b, r.after[1]);
+      this.textFit(t, x + w / 2 + 90, ry, 19, w - 260, '#E8F5D0');
+    });
+  }
+
+  /** Fim do duelo. */
+  drawDuelEnd() {
+    const g = this.game, cx = this.vw / 2;
+    this.drawMenuBackground();
+    const w = g.players.find((p) => p.id === g.duelWinner);
+    const mine = w === g.player;
+    this.text(mine ? '🏆 VOCÊ VENCEU O DUELO!' : w ? w.name + ' venceu o duelo!' : 'Empate!', cx, 110, mine ? 58 : 50, mine ? C.GOLD : '#FF8A7A', 'center');
+    if (w) {
+      this.drawHero(w.character, cx, 260, 150, { lookX: 0, lookY: -0.6, bob: Math.sin(this.time * 4) * 0.04 });
+      this.emoji('👑', cx, 160, 60);
+      this.text(w.character.name, cx, 370, 26, '#FFFFFF', 'center');
+    }
+    let tx = cx - (g.players.length * 170) / 2 + 85;
+    for (const q of g.players) {
+      const dmg = q.weapons.reduce((a, wp) => a + wp.totalDamage, 0) + q.extraSrc.totalDamage;
+      this.drawHero(q.character, tx, 450, 56, { lookX: 0, lookY: 0.3, alpha: q === w ? 1 : 0.6 });
+      this.textFit(q.name + (q === g.player ? ' (você)' : ''), tx, 500, 18, 160, SLOT_COLORS[q.slot % SLOT_COLORS.length]);
+      this.text('Dano: ' + shortNum(Math.round(dmg)), tx, 524, 16, '#E0E0E0', 'center');
+      tx += 170;
+    }
+    const bw = Math.min(360, (this.vw - 100) / 2);
+    this.button(cx - bw - 10, VH - 120, bw, 84, this.touch ? 'Voltar pra sala' : 'Voltar pra sala (Enter)', 'MP_BACK_LOBBY', 0, C.GREEN, true, 30);
+    this.button(cx + 10, VH - 120, bw, 84, 'Sair da sala', 'QUIT', 0, C.GRAY, true, 30);
+  }
+
+  /** Calor do canhão laser (Cyborg). */
+  drawHeatBar(p) {
+    const vw = this.vw, L = p.laser, w = 260, x = vw / 2 - w / 2, y = 116;
+    const col = L.over ? '#9E9E9E' : L.heat > 0.75 ? '#FF3D00' : L.heat > 0.45 ? '#FFA000' : '#4FC3F7';
+    this.bar(x, y, w, 14, L.heat, col, '#1A1A22');
+    const label = L.over ? 'SUPERAQUECIDO! esfriando...' : L.on ? 'LASER ' + Math.round(L.heat * 100) + '%' : 'LASER pronto';
+    this.text(label, vw / 2, y + 36, 18, L.over ? '#FF8A65' : '#E0F7FA', 'center');
   }
 
   /** Time no canto da tela: ícone, nome e vida de cada amigo. */
@@ -1306,6 +1566,7 @@ class Ui {
     if (coop) this.text('A partida continua rolando!', cx, 150, 22, '#FF8A7A', 'center');
     this.button(cx - 170, 180, 340, 84, this.touch ? 'Continuar' : 'Continuar (Esc)', 'RESUME', 0, C.GREEN, true, 34);
     this.button(cx - 170, 285, 340, 70, coop ? 'Sair da sala' : 'Desistir', 'QUIT', 0, C.RED, true, 30);
+    this.button(cx + 190, 285, 190, 70, '🐞 Bug', 'REPORT', 0, '#A0522D', true, 26);
     this.drawWeaponRow(40, 420, cx * 2 - 80, false);
     this.drawItemsGrid(40, 590, cx * 2 - 80, 110);
     this.drawStatsPanel(vw - statsW - 16, 16, statsW, VH - 32);
@@ -1348,7 +1609,8 @@ class Ui {
     const areaW = vw - statsW - 48;
     this.text('LOJA', 24, 58, 46, C.GOLD, 'left');
     let sub = 'Onda ' + g.wave + ' concluída!';
-    if (g.coop) sub += '  Prontos: ' + (g.players.length - this.mp.waitingFor().length) + '/' + g.players.length;
+    if (g.pvp === 'prep') sub = 'Rodada ' + g.wave + '/' + PVP_PREP_WAVES + ' concluída!' + (g.prepFinished() ? '  Prepare-se pro duelo!' : '');
+    else if (g.coop) sub += '  Prontos: ' + (g.players.length - this.mp.waitingFor().length) + '/' + g.players.length;
     else if (g.lastHarvest > 0 && !narrow) sub += '  Colheita: +' + g.lastHarvest;
     this.text(sub, 150, 56, 24, '#E8F5D0', 'left');
     this.seedCounter(24 + areaW - 140, 30, p.materials);
@@ -1364,7 +1626,7 @@ class Ui {
       }
       const tier = o.weapon ? o.tier : o.item.tier;
       this.card(x, y, cw, ch, tier, false);
-      this.emoji(offerIcon(o), x + 46, y + 48, 62);
+      if (o.item) this.itemIcon(o.item, x + 46, y + 48, 62); else this.emoji(offerIcon(o), x + 46, y + 48, 62);
       if (!narrow) {
         this.text(o.weapon ? 'ARMA' : 'ITEM', x + 86, y + 42, 18, '#B0B0B0', 'left');
         if (o.weapon) this.text(TYPE_NAMES[o.weapon.type], x + 86, y + 64, 16, '#B0B0B0', 'left');
@@ -1378,7 +1640,7 @@ class Ui {
           this.text(Stat.format(o.item.mods[m], v), x + 14, ly, narrow ? 16 : 19, v >= 0 ? '#8CF08C' : '#FF8080', 'left');
           ly += 24;
         }
-        if (o.item.special >= 0) this.wrapped(o.item.specialText, x + 14, ly, cw - 28, narrow ? 15 : 17, '#FFE08A', 'left');
+        if (o.item.specialText) this.wrapped(o.item.specialText, x + 14, ly, cw - 28, narrow ? 15 : 17, o.item.only === 'laser' ? '#FF9AA8' : '#FFE08A', 'left');
       }
       // cadeado
       const lx = x + cw - 50, lyy = y + 8;
@@ -1398,10 +1660,24 @@ class Ui {
     this.drawStatsPanel(sx, 16, statsW, VH - 32 - 170);
     const cost = g.shopRerollCost();
     this.buttonSeed(sx, VH - 172, statsW, 66, cost, 'REROLL', 0, C.ORANGE, p.materials >= cost, this.touch ? 'Rolar ' : 'Rolar (R) ');
-    this.button(sx, VH - 96, statsW, 80, g.coop ? 'Pronto ✔' : 'Próxima onda ▶', 'NEXT', 0, C.GREEN, true, 30);
+    const nextLabel = g.pvp === 'prep' ? (g.prepFinished() ? '⚔️ Ir pro duelo' : 'Próxima rodada ▶') : g.coop ? 'Pronto ✔' : 'Próxima onda ▶';
+    this.button(sx, VH - 96, statsW, 80, nextLabel, 'NEXT', 0, g.prepFinished() ? C.RED : C.GREEN, true, 30);
 
     if (this.popupWeapon >= 0 && this.popupWeapon < p.weapons.length) this.drawWeaponPopup();
     if (g.coop && this.mp.ready) this.drawWaiting();
+    if (g.pvp === 'prep' && this.mp.pvpReadySent) this.drawPvpWaiting();
+  }
+
+  /** PvP: pronto pro duelo, esperando os outros terminarem as rodadas. */
+  drawPvpWaiting() {
+    this.backdrop('NONE');
+    const w = Math.min(680, this.vw - 60), h = 300, x = this.vw / 2 - w / 2, y = VH / 2 - h / 2;
+    this.panel(x, y, w, h);
+    this.text('⚔️ Pronto pro duelo!', this.vw / 2, y + 62, 44, '#FF8A7A', 'center');
+    const names = this.mp.pvpWaiting();
+    const dots = '.'.repeat(1 + Math.floor(this.time * 2) % 3);
+    this.textFit(names.length ? 'Esperando: ' + names.join(', ') + dots : 'Abrindo a arena' + dots, this.vw / 2, y + 125, 24, w - 40, '#FFFFFF');
+    this.wrapped('Na arena, 2 atributos sorteados de cada um são trocados com os de outro jogador. A arena vai fechando: fique dentro do círculo!', this.vw / 2, y + 175, w - 60, 19, '#CFE3B8', 'center');
   }
 
   /** Multiplayer: esperando os outros terminarem a loja. */
@@ -1439,9 +1715,11 @@ class Ui {
 
   drawWeaponRow(x, y, w, clickable) {
     const g = this.game, p = g.player;
-    this.text('Armas (' + p.weapons.length + '/' + MAX_WEAPONS + ')', x, y - 10, 22, '#FFFFFF', 'left');
-    const s = Math.min(92, (w - 50) / 6);
-    for (let i = 0; i < MAX_WEAPONS; i++) {
+    const slots = p.maxWeapons();
+    if (p.kind === 'laser') { this.drawLaserCard(x, y, w); return; }
+    this.text('Armas (' + p.weapons.length + '/' + slots + ')', x, y - 10, 22, '#FFFFFF', 'left');
+    const s = Math.min(92, (w - 10 * slots) / slots);
+    for (let i = 0; i < slots; i++) {
       const sx = x + i * (s + 10);
       if (i < p.weapons.length) {
         const wp = p.weapons[i];
@@ -1465,6 +1743,21 @@ class Ui {
     }
   }
 
+  /** Cyborg: no lugar das armas, os números do canhão laser. */
+  drawLaserCard(x, y, w) {
+    const g = this.game, p = g.player, st = g.laserStats(p);
+    this.text('Canhão Laser (mira e tiro manuais)', x, y - 10, 22, '#FFFFFF', 'left');
+    this.roundRect(x, y, w, 96, 14, '#2A1A22', '#FF5A70', 3);
+    this.emoji('🔴', x + 46, y + 48, 52);
+    const lines = [
+      'Dano: ' + Math.round(st.dps) + '/s  •  Crítico ' + Math.round(st.crit) + '%  •  Alcance ' + Math.round(st.range) + '  •  Largura ' + Math.round(st.width),
+      'Atira ' + st.fireTime.toFixed(1) + ' s seguidos  •  Esfria ' + Math.round((st.cool - 1) * 100) + '% mais rápido' + (p.cy.split ? '  •  +' + p.cy.split * 2 + ' feixes' : '') + (p.cy.boom ? '  •  Explode ao superaquecer' : ''),
+    ];
+    lines.forEach((l, i) => this.textFit(l, x + 90 + (w - 100) / 2, y + 38 + i * 32, 18, w - 100, i ? '#FFE08A' : '#FFFFFF'));
+    const wp = p.weapons[0];
+    if (wp && wp.waveDamage > 0) this.text('Dano na última onda: ' + shortNum(wp.waveDamage), x + w - 10, y + 118, 17, '#FFB0A0', 'right');
+  }
+
   drawItemsGrid(x, y, w, h) {
     const p = this.game.player;
     this.text('Itens (' + p.items.length + ')', x, y - 10, 22, '#FFFFFF', 'left');
@@ -1478,7 +1771,7 @@ class Ui {
       if (i >= perRow * rows) break;
       const ix = x + (i % perRow) * (s + 6), iy = y + Math.floor(i / perRow) * (s + 6);
       this.card(ix, iy, s, s, it.tier, false);
-      this.emoji(it.icon, ix + s / 2, iy + s / 2, s * 0.7);
+      this.itemIcon(it, ix + s / 2, iy + s / 2, s * 0.7);
       if (n > 1) this.text('x' + n, ix + s - 3, iy + s - 3, 16, '#FFFFFF', 'right');
       this.register(ix, iy, s, s, 'ITEM', it, true);
       const pinned = this.tipItem === it && this.tipTime > 0;
@@ -1490,7 +1783,7 @@ class Ui {
   tooltip(it, x, y) {
     const lines = [[it.name, TIER_COLOR[it.tier]]];
     for (let m = 0; m < it.mods.length; m += 2) lines.push([Stat.format(it.mods[m], it.mods[m + 1]), it.mods[m + 1] >= 0 ? '#8CF08C' : '#FF8080']);
-    if (it.special >= 0) lines.push([it.specialText, '#FFE08A']);
+    if (it.specialText) lines.push([it.specialText, '#FFE08A']);
     const w = Math.max(...lines.map((l) => this.measure(l[0], 18))) + 24;
     const h = lines.length * 24 + 14;
     if (y + h > VH) y -= h + 62;
@@ -1542,15 +1835,14 @@ class Ui {
     this.drawMenuBackground();
     if (won) {
       this.text('A HORTA ESTÁ SALVA!', cx, 100, 68, C.GOLD, 'center');
-      this.text((g.coop ? 'O time sobreviveu' : 'Você sobreviveu') + ' às 20 ondas no ' + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
+      this.text((g.coop ? 'O time sobreviveu' : 'Você sobreviveu') + ' às ' + g.wave + ' ondas no ' + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
     } else {
       this.text('VIROU SALADA!', cx, 100, 72, '#FF6A5A', 'center');
       this.text(g.coop ? 'O time inteiro caiu... os insetos venceram desta vez.' : 'Os insetos venceram desta vez...', cx, 145, 26, '#E8F5D0', 'center');
     }
     if (p) {
       const lx = cx - 250;
-      this.emoji(p.character.icon, lx, 240, 100);
-      this.drawEyes(lx, 236, 1.3, 0, won ? -1 : 1);
+      this.drawHero(p.character, lx, 244, 100, { lookX: 0, lookY: won ? -1 : 1 });
       ['Onda alcançada: ' + g.wave, 'Dificuldade: ' + DIFF_NAMES[g.difficulty], 'Nível: ' + p.level,
         'Insetos derrotados: ' + g.kills, 'Melhor onda: ' + this.prefs.data.bestWave]
         .forEach((l, i) => this.text(l, lx, 330 + i * 36, 25, '#FFFFFF', 'center'));
@@ -1574,7 +1866,7 @@ class Ui {
       // o time
       let tx = cx - (g.players.length * 150) / 2 + 75;
       for (const q of g.players) {
-        this.emoji(q.character.icon, tx, VH - 222, 46);
+        this.drawHero(q.character, tx, VH - 222, 46, { lookX: 0, lookY: 0.4 });
         this.textFit(q.name, tx, VH - 182, 18, 140, SLOT_COLORS[q.slot % SLOT_COLORS.length]);
         tx += 150;
       }
@@ -1663,6 +1955,19 @@ class Ui {
   }
 
   panel(x, y, w, h) { this.roundRect(x, y, w, h, 18, C.PANEL, C.PANEL_BORDER, 3); }
+
+  /** Ícone de item; os do Alien brilham verde e os do Cyborg, vermelho. */
+  itemIcon(it, x, y, size) {
+    if (it.alien || it.only === 'laser') {
+      const col = it.alien ? '92,255,138' : '255,70,90';
+      const g = this.ctx.createRadialGradient(x, y, size * 0.1, x, y, size * 0.7);
+      g.addColorStop(0, `rgba(${col},0.55)`); g.addColorStop(1, `rgba(${col},0)`);
+      this.ctx.fillStyle = g; this.ctx.beginPath(); this.ctx.arc(x, y, size * 0.7, 0, Math.PI * 2); this.ctx.fill();
+    }
+    this.emoji(it.icon, x, y, size);
+    if (it.alien) this.emoji('👽', x + size * 0.38, y - size * 0.38, size * 0.38);
+    else if (it.only === 'laser') this.emoji('⚙️', x + size * 0.38, y - size * 0.38, size * 0.36);
+  }
 
   card(x, y, w, h, tier, hover) {
     this.roundRect(x, y, w, h, 14, TIER_BG[tier], TIER_COLOR[tier], hover ? 5 : 3);
@@ -1754,36 +2059,81 @@ function enterMobileFullscreen() {
 }
 
 /**
- * Caixinha HTML para digitar um texto (o canvas não tem campo de texto).
- * o = {title, label, submit, initial, maxLength, upper, clean(v), check(v) -> erro ou ''}
+ * Formulário HTML por cima do jogo (o canvas não tem campo de texto).
+ * o = {title, submit, fields: [{id, label, type ('text'|'password'|'textarea'|'select'|'note'), value, maxLength, options, upper}],
+ *      check(values) -> mensagem de erro ou ''}
+ * onOk(values) recebe os valores; se devolver uma Promise que falha com Error, a mensagem aparece e a caixa fica aberta.
  */
-function askText(o, onOk) {
+function openForm(o, onOk) {
   const box = document.getElementById('nameBox');
   const form = document.getElementById('nameForm');
-  const input = document.getElementById('nameInput');
+  const holder = document.getElementById('formFields');
   const err = document.getElementById('nameErr');
+  const okBtn = document.getElementById('nameOk');
   if (!box) return;
   document.getElementById('nameTitle').textContent = o.title;
-  document.getElementById('nameLabel').textContent = o.label;
-  document.getElementById('nameOk').textContent = o.submit;
-  input.maxLength = o.maxLength || 16;
-  input.minLength = o.maxLength === 4 ? 4 : 2;
-  input.setAttribute('autocapitalize', o.upper ? 'characters' : 'words');
-  input.style.textTransform = o.upper ? 'uppercase' : 'none';
-  input.value = o.initial || '';
+  okBtn.textContent = o.submit || 'OK';
+  okBtn.disabled = false;
+  holder.textContent = '';
+  const inputs = {};
+  for (const f of o.fields) {
+    if (f.type === 'note') {
+      const p = document.createElement('p');
+      p.className = 'note'; p.textContent = f.label;
+      holder.appendChild(p);
+      continue;
+    }
+    const label = document.createElement('label');
+    label.textContent = f.label;
+    label.htmlFor = 'fld_' + f.id;
+    holder.appendChild(label);
+    let el;
+    if (f.type === 'textarea') el = document.createElement('textarea');
+    else if (f.type === 'select') {
+      el = document.createElement('select');
+      for (const [v, t] of f.options) { const op = document.createElement('option'); op.value = v; op.textContent = t; el.appendChild(op); }
+    } else {
+      el = document.createElement('input');
+      el.type = f.type || 'text';
+      el.spellcheck = false;
+      el.setAttribute('autocapitalize', f.upper ? 'characters' : 'off');
+      if (f.upper) el.style.textTransform = 'uppercase';
+      if (f.type === 'password') el.autocomplete = f.newPassword ? 'new-password' : 'current-password';
+    }
+    el.id = 'fld_' + f.id;
+    if (f.maxLength) el.maxLength = f.maxLength;
+    if (f.value !== undefined) el.value = f.value;
+    holder.appendChild(el);
+    inputs[f.id] = el;
+  }
   err.textContent = '';
   box.hidden = false;
-  setTimeout(() => { input.focus(); input.select(); }, 30);
+  const first = o.fields.find((f) => f.type !== 'note' && f.type !== 'select' && !f.value) || o.fields.find((f) => inputs[f.id]);
+  setTimeout(() => { if (first && inputs[first.id]) { inputs[first.id].focus(); if (inputs[first.id].select) inputs[first.id].select(); } }, 30);
   const close = () => { box.hidden = true; form.onsubmit = null; document.getElementById('nameCancel').onclick = null; };
-  document.getElementById('nameCancel').onclick = close;
+  document.getElementById('nameCancel').onclick = () => { close(); if (o.onCancel) o.onCancel(); };
   form.onsubmit = (ev) => {
     ev.preventDefault();
-    const v = o.clean ? o.clean(input.value) : input.value;
-    const e = o.check ? o.check(v) : '';
+    const values = {};
+    for (const f of o.fields) if (inputs[f.id]) values[f.id] = f.clean ? f.clean(inputs[f.id].value) : inputs[f.id].value;
+    const e = o.check ? o.check(values) : '';
     if (e) { err.textContent = e; return; }
-    close();
-    onOk(v);
+    const r = onOk(values);
+    if (r && r.then) {
+      okBtn.disabled = true;
+      err.textContent = 'Aguarde...';
+      r.then(() => close(), (ex) => { okBtn.disabled = false; err.textContent = ex && ex.message ? ex.message : 'Deu erro. Tente de novo.'; });
+    } else close();
   };
+}
+
+/** Uma pergunta de texto só (nome, código da sala...). */
+function askText(o, onOk) {
+  openForm({
+    title: o.title, submit: o.submit,
+    fields: [{ id: 'v', label: o.label, value: o.initial || '', maxLength: o.maxLength || 16, upper: o.upper, clean: o.clean }],
+    check: (v) => (o.check ? o.check(v.v) : ''),
+  }, (v) => onOk(v.v));
 }
 
 /** Nome para o ranking. */
