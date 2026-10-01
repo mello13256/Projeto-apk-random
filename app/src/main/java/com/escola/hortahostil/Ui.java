@@ -37,6 +37,8 @@ import java.util.Random;
  */
 final class Ui {
     static final float VH = 720f;
+    /** Versão online do jogo (publicada pelo GitHub Pages). */
+    static final String WEBSITE = "https://mello13256.github.io/Projeto-apk-random/";
 
     // Acoes dos botoes
     private static final int A_PLAY = 1, A_SOUND = 2, A_VIBRA = 3, A_CHAR = 4, A_START = 5,
@@ -44,7 +46,7 @@ final class Ui {
             A_BUY = 12, A_LOCK = 13, A_REROLL = 14, A_NEXT = 15, A_WEAPON = 16, A_SELL = 17,
             A_COMBINE = 18, A_CLOSE = 19, A_AGAIN = 20, A_HELP = 21, A_MUSIC = 22,
             A_CONTINUE = 23, A_DIFF = 24, A_CRATE_TAKE = 25, A_CRATE_RECYCLE = 26, A_ITEM = 27,
-            A_RANDOM = 28;
+            A_RANDOM = 28, A_ONLINE = 29;
     private static final int RANDOM_CHAR = -1;
 
     private static final int[] TIER_COLOR = {0xFFD7D7D7, 0xFF4AA3FF, 0xFFB76BFF, 0xFFFF5A4A};
@@ -107,6 +109,7 @@ final class Ui {
     private String newUnlocks = "";
     private Game.State lastState;
     private Runnable onMusicChanged;
+    private Runnable onOpenWebsite;
     private final Paint vignettePaint = new Paint();
     private final Paint slowPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint elitePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -132,6 +135,11 @@ final class Ui {
         elitePaint.setColorFilter(new PorterDuffColorFilter(0x55FFC400, PorterDuff.Mode.SRC_ATOP));
         selectedChar = prefs.lastChar();
         difficulty = prefs.lastDifficulty();
+    }
+
+    /** Abre a versão online (site no GitHub Pages). */
+    void setOnOpenWebsite(Runnable r) {
+        onOpenWebsite = r;
     }
 
     /** Chamado quando o jogador liga/desliga a música no menu. */
@@ -293,6 +301,9 @@ final class Ui {
                 break;
             case A_HELP:
                 showHelp = !showHelp;
+                break;
+            case A_ONLINE:
+                if (onOpenWebsite != null) onOpenWebsite.run();
                 break;
             case A_CHAR:
                 selectedChar = arg;
@@ -507,13 +518,14 @@ final class Ui {
             button(c, cx - 170, 335, 340, 90, "JOGAR", A_PLAY, 0, C_GREEN, true, 44);
         }
 
-        float bw = 200, gap = 16, bx = cx - (bw * 4 + gap * 3) / 2;
-        button(c, bx, 465, bw, 62, prefs.sound() ? "Som: SIM" : "Som: NÃO", A_SOUND, 0, C_GRAY, true, 25);
+        float gap = 14, bw = Math.min(196, (vw - 60 - gap * 4) / 5), bx = cx - (bw * 5 + gap * 4) / 2;
+        button(c, bx, 465, bw, 62, prefs.sound() ? "Som: SIM" : "Som: NÃO", A_SOUND, 0, C_GRAY, true, 24);
         button(c, bx + (bw + gap), 465, bw, 62, prefs.music() ? "Música: SIM" : "Música: NÃO", A_MUSIC, 0,
-                C_GRAY, true, 25);
+                C_GRAY, true, 24);
         button(c, bx + (bw + gap) * 2, 465, bw, 62, prefs.vibration() ? "Vibrar: SIM" : "Vibrar: NÃO", A_VIBRA,
-                0, C_GRAY, true, 25);
-        button(c, bx + (bw + gap) * 3, 465, bw, 62, "Como jogar", A_HELP, 0, C_GRAY, true, 25);
+                0, C_GRAY, true, 24);
+        button(c, bx + (bw + gap) * 3, 465, bw, 62, "Como jogar", A_HELP, 0, C_GRAY, true, 24);
+        button(c, bx + (bw + gap) * 4, 465, bw, 62, "Jogar online", A_ONLINE, 0, 0xFF2E7D9A, true, 24);
 
         String rec = "Melhor onda: " + prefs.bestWave() + "   •   Vitórias: " + prefs.wins()
                 + "   •   Insetos derrotados: " + prefs.totalKills();
@@ -522,7 +534,9 @@ final class Ui {
         for (boolean b : unlockedChars()) if (b) unlocked++;
         text(c, "Personagens liberados: " + unlocked + "/" + CharDef.ALL.length, cx, 618, 22,
                 0xFFB8CFA0, Paint.Align.CENTER);
-        text(c, "Projeto escolar • feito com Java puro • v2.0", cx, 692, 20, 0x99FFFFFF,
+        text(c, "Online: " + WEBSITE.replace("https://", ""), cx, 656, 18, 0x88CFE3B8,
+                Paint.Align.CENTER);
+        text(c, "Projeto escolar • feito com Java puro • v2.1", cx, 692, 20, 0x99FFFFFF,
                 Paint.Align.CENTER);
         if (showHelp) drawHelp(c);
     }

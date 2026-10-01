@@ -41,6 +41,7 @@ class Weapon {
     this.attackT = -1; this.attackDur = 0; this.dirX = 0; this.dirY = 0; this.reach = 0;
     this.tipX = 0; this.tipY = 0;
     this.hitList = [];
+    this.waveDamage = 0; this.totalDamage = 0;
   }
   attacking() { return this.attackT >= 0; }
   cooldown(p) {
@@ -76,6 +77,8 @@ class Player {
     for (let i = 0; i < c.mods.length; i += 2) this.stats[c.mods[i]] += c.mods[i + 1];
     this.weapons = [new Weapon(c.startWeapon, 0)];
     this.items = [];
+    this.specials = new Array(SP_COUNT).fill(0);
+    this.crates = 0;
     this.x = 0; this.y = 0; this.radius = 26;
     this.hp = this.maxHp();
     this.iframes = 0; this.regenAcc = 0;
@@ -91,7 +94,13 @@ class Player {
     return a >= 0 ? 1 / (1 + a / 15) : 1 + (-a) / 15;
   }
   xpToNext() { return (this.level + 3) * (this.level + 3); }
-  pickupRange() { return 110; }
+  pickupRange() { return 110 * (1 + this.specials[SP_MAGNET] / 100); }
+  addItem(it) {
+    this.items.push(it);
+    for (let m = 0; m < it.mods.length; m += 2) this.stats[it.mods[m]] += it.mods[m + 1];
+    if (it.special >= 0) this.specials[it.special] += it.specialValue;
+    this.hp = Math.min(this.maxHp(), Math.max(this.hp, 1));
+  }
   heal(v) { this.hp = Math.min(this.maxHp(), this.hp + v); }
 }
 
@@ -141,7 +150,12 @@ class Game {
   constructor(seed) {
     this.rng = makeRng(seed);
     this.fx = NO_FX;
-    this.state = 'MENU'; // MENU, CHAR_SELECT, PLAYING, LEVEL_UP, SHOP, GAME_OVER, VICTORY
+    this.state = 'MENU'; // MENU, CHAR_SELECT, PLAYING, LEVEL_UP, CRATE, SHOP, GAME_OVER, VICTORY
+    this.difficulty = 1;
+    this.ending = false; this.endTimer = 0;   // animação do fim da onda
+    this.crateItem = null;
+    this.cratesDroppedThisWave = 0; this.elitesThisWave = 0;
+    this.explosionDepth = 0;
     this.paused = false;
     this.player = null;
     this.wave = 0; this.waveTime = 0; this.waveDuration = 0; this.spawnTimer = 0;
@@ -158,7 +172,8 @@ class Game {
 
   // --- Fluxo ---
 
-  newRun(c) {
+  newRun(c, diff) {
+    if (diff !== undefined) this.difficulty = clamp(diff, 0, DIFF_NAMES.length - 1);
     this.player = new Player(c);
     this.player.materials = START_MATERIALS;
     this.kills = 0; this.levelsPending = 0;
@@ -174,10 +189,13 @@ class Game {
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.pickups = []; this.particles = []; this.texts = [];
     this.boss = null;
+    this.ending = false;
+    this.cratesDroppedThisWave = 0; this.elitesThisWave = 0;
     const p = this.player;
+    p.crates = 0;
     p.x = WORLD_W / 2; p.y = WORLD_H / 2;
     p.hp = p.maxHp(); p.iframes = 1; p.regenAcc = 0;
-    for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; }
+    for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; }
     this.spawnTimer = 0.6;
     if (n === 10) {
       const pos = this.randomSpawnPos(450);
@@ -205,7 +223,7 @@ class Game {
     this.addXp(gain);
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = []; this.pickups = [];
     this.boss = null;
-    this.fx.sound('WAVE_END');
+    this.ending = false;
     if (this.wave >= MAX_WAVE) {
       this.state = 'VICTORY';
       this.fx.runEnded(true, this.wave);
@@ -216,8 +234,54 @@ class Game {
       this.levelRerolls = 0;
       this.rollLevelChoices();
     } else {
-      this.openShop();
+      this.afterLevelUps();
     }
+  }
+
+  /** Depois das melhorias: abre as caixas (se houver) e depois a loja. */
+  afterLevelUps() {
+    if (this.player.crates > 0) this.openCrate();
+    else this.openShop();
+  }
+
+  /** Fim da onda animado: insetos somem e as sementes voam até o jogador. */
+  beginEnding() {
+    this.ending = true;
+    this.endTimer = 1.3;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      e.dead = true;
+      this.burst(e.x, e.y, 6, '139,107,74', 140, 5, 0.4);
+    }
+    this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
+    this.boss = null;
+    for (const pk of this.pickups) pk.attracted = true;
+    this.showBanner('ONDA CONCLUÍDA!');
+    this.fx.sound('WAVE_END');
+  }
+
+  // --- Caixas ---
+
+  openCrate() {
+    this.state = 'CRATE';
+    const tier = rollTier(this.rng, this.wave + 3, this.player.stats[Stat.LUCK]);
+    const pool = ITEMS.filter((it) => it.tier === tier);
+    this.crateItem = pool[this.rng.int(pool.length)];
+  }
+
+  crateRecyclePrice() {
+    return this.crateItem ? Math.max(1, Math.round(itemPrice(this.crateItem, this.wave + 1) * 0.35)) : 0;
+  }
+
+  /** Pega (true) ou recicla (false) o item da caixa. */
+  resolveCrate(take) {
+    if (this.state !== 'CRATE' || !this.crateItem) return;
+    if (take) { this.player.addItem(this.crateItem); this.fx.sound('LEVEL_UP'); }
+    else { this.player.materials += this.crateRecyclePrice(); this.fx.sound('BUY'); }
+    this.crateItem = null;
+    this.player.crates--;
+    if (this.player.crates > 0) this.openCrate();
+    else this.openShop();
   }
 
   gameOver() {
@@ -277,7 +341,7 @@ class Game {
     this.levelsPending--;
     this.fx.sound('BUY');
     if (this.levelsPending > 0) { this.levelRerolls = 0; this.rollLevelChoices(); }
-    else this.openShop();
+    else this.afterLevelUps();
   }
 
   levelRerollCost() { return 1 + Math.floor(this.wave / 2) + this.levelRerolls * (1 + Math.floor(this.wave / 4)); }
@@ -335,9 +399,7 @@ class Game {
       if (p.weapons.length < MAX_WEAPONS) p.weapons.push(new Weapon(o.weapon, o.tier));
       else p.weapons[this.findMergeTarget(o.weapon, o.tier, -1)].tier++;
     } else {
-      p.items.push(o.item);
-      for (let m = 0; m < o.item.mods.length; m += 2) p.stats[o.item.mods[m]] += o.item.mods[m + 1];
-      p.hp = Math.min(p.maxHp(), Math.max(p.hp, 1));
+      p.addItem(o.item);
     }
     p.materials -= o.price;
     this.offers[i] = null;
@@ -385,8 +447,17 @@ class Game {
   update(dt, jx, jy) {
     if (this.bannerTime > 0) this.bannerTime -= dt;
     if (this.state !== 'PLAYING' || this.paused) return;
-    this.waveTime += dt;
     this.shake = Math.max(0, this.shake - dt * 25);
+    if (this.ending) {
+      this.updatePlayer(dt, jx, jy);
+      this.updatePickups(dt);
+      this.updateEffects(dt);
+      this.cleanup();
+      this.endTimer -= dt;
+      if (this.endTimer <= 0) this.endWave();
+      return;
+    }
+    this.waveTime += dt;
     this.updatePlayer(dt, jx, jy);
     this.updateSpawns(dt);
     this.updateEnemies(dt);
@@ -398,7 +469,7 @@ class Game {
     this.updateEffects(dt);
     this.cleanup();
     if (this.player.hp <= 0) { this.gameOver(); return; }
-    if (this.waveTime >= this.waveDuration) this.endWave();
+    if (this.waveTime >= this.waveDuration) this.beginEnding();
   }
 
   updatePlayer(dt, jx, jy) {
@@ -427,7 +498,7 @@ class Game {
   // --- Inimigos ---
 
   hpMult() { const w = this.wave - 1; return 1 + 0.25 * w + 0.028 * w * w; }
-  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065); }
+  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty]; }
   enemyCap() { return Math.min(175, 70 + this.wave * 5); }
 
   updateSpawns(dt) {
@@ -460,7 +531,7 @@ class Game {
       if (w < d.minWave) return 0;
       if (d === E.LAGARTA) return 10;
       if (d === E.VESPA) return 4 + Math.floor(w / 3);
-      if (d === E.ARANHA) return 3 + Math.floor(w / 4);
+      if (d === E.ARANHA || d === E.MARIPOSA) return 3 + Math.floor(w / 4);
       return 2 + Math.floor(w / 5);
     });
     let r = this.rng.int(weights.reduce((a, b) => a + b, 0));
@@ -472,15 +543,28 @@ class Game {
   }
 
   spawnEnemy(d, x, y) {
-    const maxHp = d.hp * (d.boss ? 1 : this.hpMult());
+    const maxHp = d.hp * (d.boss ? 1 : this.hpMult()) * DIFF_HP[this.difficulty];
+    const baseDmg = Math.max(1, Math.round(d.damage + d.damagePerWave * (this.wave - 1)));
     const e = {
       def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
       speed: d.speed * (0.9 + this.rng.float() * 0.2),
-      damage: Math.max(1, Math.round(d.damage + d.damagePerWave * (this.wave - 1))),
+      damage: Math.max(1, Math.round(baseDmg * DIFF_DMG[this.difficulty])),
       flash: 0, dead: false, facingLeft: true, anim: 0,
-      burnTime: 0, burnTick: 0, burnDamage: 0,
-      aiState: 0, aiTimer: 1 + this.rng.float() * 1.5, aiTimer2: d.boss ? 6 : 0, dashX: 0, dashY: 0, spiral: 0,
+      burnTime: 0, burnTick: 0, burnDamage: 0, burnSource: null, slowTime: 0, elite: false,
+      aiState: 0, aiTimer: 1 + this.rng.float() * 1.5, aiTimer2: d.boss ? 6 : 0, dashX: 0, dashY: 0,
+      spiral: d.boss ? 0 : this.rng.float() * 6.28,
     };
+    // Poucos elites por onda: 1 a partir da onda 5, 2 a partir da 10, 3 a partir da 15.
+    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 ? 1 : 0);
+    const eliteChance = 0.012 + 0.004 * this.difficulty;
+    if (!d.boss && this.elitesThisWave < maxElites && d !== E.VESPA && this.rng.float() < eliteChance) {
+      this.elitesThisWave++;
+      e.elite = true;
+      e.maxHp *= 4; e.hp = e.maxHp;
+      e.radius *= 1.35;
+      e.damage = Math.round(e.damage * 1.5);
+      e.speed *= 0.9;
+    }
     this.enemies.push(e);
     this.burst(x, y, d.boss ? 30 : 6, '139,107,74', 120, 5, 0.4);
     if (d.boss) { this.boss = e; this.shake = 10; this.fx.vibrate(120); }
@@ -515,7 +599,7 @@ class Game {
         if (e.burnTick <= 0) {
           e.burnTick = 0.5;
           this.burst(e.x, e.y - e.radius * 0.5, 3, '255,138,26', 60, 4, 0.4);
-          this.damageEnemy(e, e.burnDamage, false, 0, 0, 0, 0, '#FFA040');
+          this.damageEnemy(e, e.burnDamage, false, 0, 0, 0, 0, '#FFA040', e.burnSource);
           if (e.dead) continue;
         }
         if (e.burnTime <= 0) e.burnDamage = 0;
@@ -565,12 +649,19 @@ class Game {
           break;
       }
 
+      if (e.def.ai === AI_ZIGZAG) {
+        const wob = Math.sin(e.anim * 5 + e.spiral) * 1.1;
+        mx = nx - ny * wob; my = ny + nx * wob;
+        const len = Math.hypot(mx, my) + 0.0001;
+        mx /= len; my /= len;
+      }
+      if (e.slowTime > 0) { e.slowTime -= dt; sp *= 0.5; }
       e.x += mx * sp * dt;
       e.y += my * sp * dt;
       if (Math.abs(mx) > 0.05) e.facingLeft = mx < 0;
       e.x = clamp(e.x, e.radius * 0.5, WORLD_W - e.radius * 0.5);
       e.y = clamp(e.y, e.radius * 0.5, WORLD_H - e.radius * 0.5);
-      if (d < e.radius + p.radius - 8) this.damagePlayer(e.damage);
+      if (d < e.radius + p.radius - 8) this.damagePlayer(e.damage, e);
     }
   }
 
@@ -644,9 +735,11 @@ class Game {
     this.enemyBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false });
   }
 
-  damagePlayer(dmg) {
+  damagePlayer(dmg, source) {
     const p = this.player;
-    if (p.iframes > 0 || this.state !== 'PLAYING') return;
+    if (p.iframes > 0 || this.state !== 'PLAYING' || this.ending) return;
+    const thorns = p.specials[SP_THORNS];
+    if (source && thorns > 0 && !source.dead) this.damageEnemy(source, thorns, false, 0, 0, 0, 0, '#FF7AB0', null);
     if (this.rng.int(100) < p.dodgeChance()) {
       this.addText(p.x, p.y - 40, 'Esquivou!', '#BFE8FF', 24);
       p.iframes = 0.25;
@@ -715,7 +808,7 @@ class Game {
       if (dx * dx + dy * dy < r * r) {
         w.hitList.push(e);
         const dmg = this.rollDamage(w);
-        this.damageEnemy(e, dmg, this.lastCrit, w.dirX, w.dirY, w.def.knockback, 0, null);
+        this.damageEnemy(e, dmg, this.lastCrit, w.dirX, w.dirY, w.def.knockback, 0, null, w);
       }
     }
   }
@@ -733,9 +826,9 @@ class Game {
       this.bullets.push({
         x: w.x + c * 16, y: w.y + s * 16, vx: c * def.projSpeed, vy: s * def.projSpeed,
         life: (range + 40) / def.projSpeed, damage: dmg, crit: this.lastCrit,
-        pierce: def.pierce, bounce: def.bounce, explosion: def.explosion, burn,
+        pierce: def.pierce, bounce: def.bounce, explosion: def.explosion, burn, slow: def.slow, source: w,
         knockback: def.knockback, color: def.color, lightning: !!def.lightning,
-        radius: def.explosion > 0 ? 10 : def.burn > 0 ? 10 : 7, dead: false, hit: [],
+        radius: def.explosion > 0 || def.burn > 0 || def.slow > 0 ? 10 : 7, dead: false, hit: [],
       });
     }
     this.fx.sound('SHOOT');
@@ -765,7 +858,8 @@ class Game {
         if (dx * dx + dy * dy >= r * r) continue;
         if (b.explosion > 0) { this.explode(b); b.dead = true; break; }
         const sp = Math.hypot(b.vx, b.vy);
-        this.damageEnemy(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, null);
+        if (b.slow > 0) e.slowTime = Math.max(e.slowTime, b.slow);
+        this.damageEnemy(e, b.damage, b.crit, b.vx / sp, b.vy / sp, b.knockback, b.burn, null, b.source);
         b.hit.push(e);
         if (b.lightning) this.burst(e.x, e.y, 5, '255,242,122', 160, 3, 0.25);
         if (b.bounce > 0) {
@@ -787,21 +881,27 @@ class Game {
   }
 
   explode(b) {
-    const r = b.explosion;
+    this.explodeAt(b.x, b.y, b.explosion, b.damage, b.crit, b.knockback, b.burn, b.source);
+  }
+
+  explodeAt(x, y, r, damage, crit, kb, burn, src) {
+    if (this.explosionDepth > 6) return; // evita reação em cadeia infinita
+    this.explosionDepth++;
     for (const e of this.enemies) {
       if (e.dead) continue;
-      const dx = e.x - b.x, dy = e.y - b.y;
+      const dx = e.x - x, dy = e.y - y;
       const rr = r + e.radius;
       const d2 = dx * dx + dy * dy;
       if (d2 < rr * rr) {
         const d = Math.sqrt(d2) + 0.001;
-        this.damageEnemy(e, b.damage, b.crit, dx / d, dy / d, b.knockback, b.burn, null);
+        this.damageEnemy(e, damage, crit, dx / d, dy / d, kb, burn, null, src);
       }
     }
+    this.explosionDepth--;
     if (this.particles.length < 500) {
-      this.particles.push({ x: b.x, y: b.y, vx: 0, vy: 0, ring: true, size: r, life: 0.3, maxLife: 0.3, color: '255,176,64' });
+      this.particles.push({ x, y, vx: 0, vy: 0, ring: true, size: r, life: 0.3, maxLife: 0.3, color: '255,176,64' });
     }
-    this.burst(b.x, b.y, 14, '255,154,42', 260, 7, 0.45);
+    this.burst(x, y, 14, '255,154,42', 260, 7, 0.45);
     this.shake = Math.max(this.shake, 4);
     this.fx.sound('EXPLODE');
   }
@@ -818,12 +918,17 @@ class Game {
     }
   }
 
-  damageEnemy(e, dmg, crit, kx, ky, kb, burn, textColor) {
+  damageEnemy(e, dmg, crit, kx, ky, kb, burn, textColor, src) {
     if (e.dead) return;
+    if (src) {
+      const real = Math.round(Math.min(dmg, Math.max(0, e.hp)));
+      src.waveDamage += real;
+      src.totalDamage += real;
+    }
     e.hp -= dmg;
     e.flash = 0.08;
     if (!e.def.boss && kb > 0) {
-      const resist = e.def === E.JOANINHA ? 0.4 : 1;
+      const resist = e.def === E.JOANINHA || e.elite ? 0.4 : 1;
       e.vx += kx * kb * 12 * resist;
       e.vy += ky * kb * 12 * resist;
     }
@@ -832,6 +937,7 @@ class Game {
     if (burn > 0) {
       e.burnTime = 2.1;
       if (e.burnDamage < burn) e.burnDamage = burn;
+      e.burnSource = src || null;
       if (e.burnTick <= 0) e.burnTick = 0.5;
     }
     const p = this.player;
@@ -843,14 +949,30 @@ class Game {
   killEnemy(e) {
     e.dead = true;
     this.kills++;
-    for (let i = 0; i < e.def.drops; i++) {
+    const drops = e.elite ? e.def.drops * 4 : e.def.drops;
+    for (let i = 0; i < drops; i++) {
       const a = this.rng.float() * Math.PI * 2;
-      const s = e.def.drops > 1 ? 60 + this.rng.float() * 180 : 20;
+      const s = drops > 1 ? 60 + this.rng.float() * 180 : 20;
       this.dropMaterial(e.x, e.y, Math.cos(a) * s, Math.sin(a) * s);
     }
-    const fruitChance = 0.025 * Math.max(0.2, 1 + this.player.stats[Stat.LUCK] / 100);
-    if (!e.def.boss && this.rng.float() < fruitChance) {
-      this.pickups.push({ type: 1, x: e.x, y: e.y, vx: 0, vy: 0, value: 3, attracted: false, dead: false, bob: 0 });
+    const p = this.player;
+    const luck = Math.max(0.2, 1 + p.stats[Stat.LUCK] / 100);
+    if (!e.def.boss && this.rng.float() < 0.025 * luck) {
+      this.pickups.push({ type: 1, x: e.x, y: e.y, vx: 0, vy: 0, value: 3 + p.specials[SP_FRUIT], attracted: false, dead: false, bob: 0 });
+    }
+    const crateChance = 0.004 * luck * (1 + p.specials[SP_CRATE] / 100);
+    if (e.elite || e.def.boss || (this.cratesDroppedThisWave < 2 && this.rng.float() < crateChance)) {
+      this.cratesDroppedThisWave++;
+      this.pickups.push({ type: 2, x: e.x, y: e.y, vx: (this.rng.float() - 0.5) * 200, vy: (this.rng.float() - 0.5) * 200, value: 1, attracted: false, dead: false, bob: 0 });
+    }
+    const boom = p.specials[SP_BOOM];
+    if (boom > 0 && !e.def.boss && this.rng.int(100) < boom) {
+      const dmg = Math.max(1, Math.round((4 + this.wave * 1.5) * p.damageMult()));
+      this.explodeAt(e.x, e.y, 70, dmg, false, 15, 0, null);
+    }
+    if (e.elite) {
+      this.shake = Math.max(this.shake, 6);
+      this.addText(e.x, e.y - 30, 'ELITE!', '#FFD84A', 30);
     }
     this.burst(e.x, e.y, e.def.boss ? 60 : 10, '155,211,58', e.def.boss ? 400 : 180, e.def.boss ? 10 : 6, 0.5);
     this.fx.sound('KILL');
@@ -884,7 +1006,8 @@ class Game {
       const d = Math.hypot(dx, dy);
       if (!pk.attracted && d < range) pk.attracted = true;
       if (pk.attracted && d > 0.01) {
-        pk.vx = dx / d * 700; pk.vy = dy / d * 700;
+        const spd = this.ending ? 1300 : 700;
+        pk.vx = dx / d * spd; pk.vy = dy / d * spd;
       } else {
         const decay = Math.max(0, 1 - dt * 6);
         pk.vx *= decay; pk.vy *= decay;
@@ -897,6 +1020,10 @@ class Game {
           p.materials += pk.value;
           this.addXp(pk.value);
           this.fx.sound('PICKUP');
+        } else if (pk.type === 2) {
+          p.crates++;
+          this.addText(p.x, p.y - 40, '+1 CAIXA!', '#FFD84A', 30);
+          this.fx.sound('LEVEL_UP');
         } else {
           p.heal(pk.value);
           this.addText(p.x, p.y - 40, '+' + pk.value, '#6BFF7A', 28);
@@ -946,6 +1073,62 @@ class Game {
     this.bullets = this.bullets.filter((b) => !b.dead);
     this.enemyBullets = this.enemyBullets.filter((b) => !b.dead);
     this.pickups = this.pickups.filter((p) => !p.dead);
+  }
+
+  // --- Salvar e continuar (a partida é salva na loja) ---
+
+  saveToString() {
+    if (this.state !== 'SHOP' || !this.player) return null;
+    const p = this.player;
+    return JSON.stringify({
+      v: 2, char: CHARS.indexOf(p.character), diff: this.difficulty, wave: this.wave, kills: this.kills,
+      level: p.level, xp: p.xp, materials: p.materials, harvest: this.lastHarvest, rerolls: this.shopRerolls,
+      stats: p.stats,
+      weapons: p.weapons.map((w) => [WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
+      items: p.items.map((it) => ITEMS.indexOf(it)),
+      offers: this.offers.map((o) => (!o ? null : o.weapon
+        ? ['W', WEAPONS.indexOf(o.weapon), o.tier, o.price, o.locked ? 1 : 0]
+        : ['I', ITEMS.indexOf(o.item), o.price, o.locked ? 1 : 0])),
+    });
+  }
+
+  loadFromString(data) {
+    try {
+      const d = JSON.parse(data);
+      if (!d || d.v !== 2 || !CHARS[d.char]) return false;
+      const p = new Player(CHARS[d.char]);
+      p.weapons = d.weapons.map(([wi, tier, total, wave]) => {
+        const w = new Weapon(WEAPONS[wi], tier);
+        w.totalDamage = total; w.waveDamage = wave;
+        return w;
+      });
+      if (!p.weapons.length || p.weapons.some((w) => !w.def)) return false;
+      p.stats = d.stats.slice(0, Stat.COUNT);
+      for (const ii of d.items) {
+        const it = ITEMS[ii];
+        if (!it) return false;
+        p.items.push(it); // os atributos já estão em "stats"
+        if (it.special >= 0) p.specials[it.special] += it.specialValue;
+      }
+      p.level = d.level; p.xp = d.xp; p.materials = d.materials;
+      p.hp = p.maxHp();
+      this.offers = d.offers.map((o) => {
+        if (!o) return null;
+        if (o[0] === 'W') return { weapon: WEAPONS[o[1]], item: null, tier: o[2], price: o[3], locked: !!o[4] };
+        return { weapon: null, item: ITEMS[o[1]], tier: ITEMS[o[1]].tier, price: o[2], locked: !!o[3] };
+      });
+      this.player = p;
+      this.difficulty = d.diff; this.wave = d.wave; this.kills = d.kills;
+      this.lastHarvest = d.harvest; this.shopRerolls = d.rerolls;
+      this.levelsPending = 0; this.paused = false; this.ending = false;
+      this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
+      this.pickups = []; this.particles = []; this.texts = [];
+      this.boss = null;
+      this.state = 'SHOP';
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 
   nearestEnemy(x, y, range, exclude) {

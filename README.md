@@ -14,36 +14,41 @@ legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a ho
 > O Play Protect pode avisar que o app é "desconhecido". É normal: o app não veio da Play Store.
 > É só tocar em *Instalar mesmo assim*.
 
-## 💻📱 Versão para PC e celular (PWA)
+## 🌐 Jogar online (PC e celular)
 
-A pasta [`pwa/`](pwa) tem o mesmo jogo feito em **HTML5 + JavaScript**. Ele roda no navegador do
-**computador e do celular** e pode ser **instalado como aplicativo** (funciona até sem internet depois de instalado).
-O jogo percebe sozinho se você está usando teclado/mouse ou toque e muda os controles e as dicas na tela.
+### ▶️ **https://mello13256.github.io/Projeto-apk-random/**
+
+O mesmo jogo (versão 2.1, com tudo do APK) roda no navegador do **computador e do celular**,
+publicado pelo **GitHub Pages**. Ele funciona até sem internet depois da primeira visita e pode ser
+**instalado como aplicativo**:
+
+- **No computador (Chrome/Edge):** clique no ícone de instalar (⊕) na barra de endereço.
+- **No Android (Chrome):** menu ⋮ → **Instalar app**. Ou toque em **Baixar app Android** no menu do jogo para pegar o APK.
+- **No iPhone (Safari):** botão Compartilhar → **Adicionar à Tela de Início**.
+
+No APK, o botão **Jogar online** do menu abre esse site.
+
+O jogo percebe sozinho se você está usando teclado/mouse ou toque e muda os controles e as dicas:
 
 | | Computador | Celular / tablet |
 |---|---|---|
 | Andar | `W A S D` ou setas (ou arrastar o mouse) | arrastar o dedo (joystick) |
 | Pausar | `Esc` ou `P` | botão **II** |
+| Personagem / dificuldade | setas, `Q`/`E` = dificuldade, `Enter` = começar | tocar |
 | Melhorias / loja | clique ou teclas `1`–`4`, `R` = rolar, `Enter` = próxima onda | tocar nos cartões |
+| Caixas | `Enter` = pegar, `R` = reciclar | tocar |
 | Ver o que um item faz | passar o mouse | tocar no item |
 | Tela cheia | `F` ou botão do menu | automática ao tocar em **Jogar** |
 
 No celular o jogo fica sempre deitado: se o aparelho estiver em pé (ou com a rotação automática
 desligada), ele é desenhado de lado, é só virar o celular.
 
-**Como publicar e instalar:**
-1. No GitHub, vá em *Settings → Pages* e em *Source* escolha **GitHub Actions**.
-2. Junte este branch com o `main`: o workflow `Publicar PWA` coloca o jogo no ar em
-   `https://<seu-usuario>.github.io/<repositorio>/`.
-3. **No computador:** abra o link no Chrome ou Edge e clique no ícone de **instalar** (⊕) na barra de endereço.
-   **No Android:** abra no Chrome, menu ⋮ → **Instalar app** (ou *Adicionar à tela inicial*).
-   **No iPhone:** abra no Safari, botão Compartilhar → **Adicionar à Tela de Início**.
-   O jogo vira um app com ícone próprio, em tela cheia.
+**Como a publicação funciona:** o workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml)
+roda a cada push que muda a pasta `pwa/` ou o APK, copia o `HortaHostil.apk` junto e publica tudo no
+GitHub Pages (em *Settings → Pages*, a origem é **GitHub Actions**).
 
 Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
 Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
-
-![Versão PWA](docs/pwa_playing.png)
 
 ## 🎮 Como jogar
 
@@ -62,7 +67,7 @@ Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
 | **Caixa no fim da onda** | **Loja** |
 | ![Caixa](docs/v2_06_crate.png) | ![Loja](docs/v2_07_shop.png) |
 
-### Novidades da versão 2.0 (APK)
+### Novidades da versão 2.0
 
 - **3 personagens novos para desbloquear:** 🎃 Abóbora Blindada (chegue na onda 10),
   🥒 Pepino Arqueiro (derrote 2000 insetos no total) e 🍄 Cogumelo Místico (vença 1 partida).
@@ -107,8 +112,6 @@ Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
 - **6 inimigos** (lagarta, vespa, aranha que cospe, joaninha blindada, escorpião que dá investida,
   mariposa), versões **elite** e **2 chefões** (Lesma Rainha e Formiga Imperatriz).
 - Sons e música gerados por código, vibração, recordes e partida salvos no celular.
-
-> A versão para PC/celular no navegador (pasta `pwa/`) ainda é a 1.0: ela não tem as novidades acima.
 
 ## 🛠️ Como o projeto funciona (para a apresentação)
 

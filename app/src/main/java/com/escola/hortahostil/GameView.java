@@ -43,6 +43,23 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
         super(ctx);
         prefs = new Prefs(ctx);
         ui = new Ui(game, prefs);
+        ui.setOnOpenWebsite(new Runnable() {
+            @Override
+            public void run() {
+                // A thread do jogo não pode abrir telas: pede pra thread da interface.
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            getContext().startActivity(new android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW, android.net.Uri.parse(Ui.WEBSITE)));
+                        } catch (Exception ignored) {
+                            // nenhum navegador instalado
+                        }
+                    }
+                });
+            }
+        });
         ui.setOnMusicChanged(new Runnable() {
             @Override
             public void run() {

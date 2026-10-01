@@ -7,6 +7,7 @@
   const prefs = new Prefs();
   const sfx = new Sfx();
   sfx.enabled = prefs.data.sound;
+  sfx.musicOn = prefs.data.music;
   const game = new Game();
   const ui = new Ui(game, prefs, sfx);
   window.hortaHostil = { game, ui }; // útil para depurar no console
@@ -14,7 +15,7 @@
   game.fx = {
     sound: (id) => sfx.play(id),
     vibrate: (ms) => { if (navigator.vibrate) navigator.vibrate(ms); },
-    runEnded: (won, wave) => prefs.recordRun(won, wave),
+    runEnded: (won, wave) => ui.runEnded(won, wave),
   };
 
   // --- Celular ou computador? ---
@@ -80,9 +81,18 @@
   const autoPause = () => {
     ui.releaseAll();
     if (game.state === 'PLAYING') game.paused = true;
+    ui.saveIfPossible();
   };
   window.addEventListener('blur', autoPause);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) autoPause(); });
+  window.addEventListener('pagehide', () => ui.saveIfPossible());
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      autoPause();
+      if (sfx.ctx) sfx.ctx.suspend();
+    } else if (sfx.ctx) {
+      sfx.ctx.resume();
+    }
+  });
 
   // --- Laço principal: lógica a 60 passos/s, desenho a cada quadro ---
   const STEP = 1 / 60;

@@ -17,7 +17,7 @@ const Stat = {
 };
 
 const MELEE = 0, RANGED = 1, ELEMENTAL = 2;
-const SHAPE_FIST = 0, SHAPE_BLADE = 1, SHAPE_GUN = 2, SHAPE_STAFF = 3, SHAPE_TUBE = 4;
+const SHAPE_FIST = 0, SHAPE_BLADE = 1, SHAPE_GUN = 2, SHAPE_STAFF = 3, SHAPE_TUBE = 4, SHAPE_BOW = 5, SHAPE_HAMMER = 6;
 const TIER_DMG = [1, 1.7, 2.6, 3.8];
 const TIER_SCALE = [1, 1.2, 1.45, 1.8];
 const TIER_CD = [1, 0.92, 0.84, 0.76];
@@ -29,7 +29,7 @@ function weaponDef(name, icon, type, baseDamage, cooldown, range, scaleStat, sca
   return Object.assign({
     name, icon, type, baseDamage, cooldown, range, scaleStat, scale, shape, color, price,
     critBonus: 0, critMult: 2, knockback: 12, pellets: 1, spread: 0.08, pierce: 0, bounce: 0,
-    projSpeed: 700, explosion: 0, burn: 0, hitRadius: 22, desc: '',
+    projSpeed: 700, explosion: 0, burn: 0, slow: 0, hitRadius: 22, desc: '',
   }, extra);
 }
 
@@ -56,10 +56,19 @@ const W = {
     { explosion: 85, projSpeed: 480, knockback: 30, desc: 'Explode em área.' }),
   RAIO: weaponDef('Bastão Elétrico', '⚡', ELEMENTAL, 7, 0.9, 340, Stat.ELEMENTAL, 1, SHAPE_STAFF, '#FFE14A', 25,
     { bounce: 3, projSpeed: 1300, knockback: 2, lightning: true, desc: 'Raio pula entre 4 alvos.' }),
+  MARTELO: weaponDef('Martelo', '🔨', MELEE, 20, 1.5, 120, Stat.MELEE, 1.5, SHAPE_HAMMER, '#8A8F99', 25,
+    { hitRadius: 42, knockback: 42, desc: 'Esmaga e arremessa longe.' }),
+  ARCO: weaponDef('Arco', '🏹', RANGED, 14, 1.15, 480, Stat.RANGED, 1.2, SHAPE_BOW, '#B5793A', 22,
+    { pierce: 2, critBonus: 10, projSpeed: 950, desc: 'Flecha atravessa 2, +10% crítico.' }),
+  GELO: weaponDef('Varinha de Gelo', '❄️', ELEMENTAL, 6, 0.9, 380, Stat.ELEMENTAL, 1, SHAPE_STAFF, '#8FE3FF', 22,
+    { slow: 2, projSpeed: 600, desc: 'Congela: inimigo fica lento.' }),
 };
 const WEAPONS = Object.values(W);
 
-function item(name, icon, tier, ...mods) { return { name, icon, tier, mods }; }
+// Efeitos especiais dos itens
+const SP_MAGNET = 0, SP_BOOM = 1, SP_THORNS = 2, SP_CRATE = 3, SP_FRUIT = 4, SP_COUNT = 5;
+function item(name, icon, tier, ...mods) { return { name, icon, tier, mods, special: -1, specialValue: 0, specialText: '' }; }
+function sp(it, special, value, text) { return Object.assign(it, { special, specialValue: value, specialText: text }); }
 const S = Stat;
 const ITEMS = [
   item('Adubo', '🌱', 0, S.HP, 3),
@@ -94,9 +103,32 @@ const ITEMS = [
   item('Dragão', '🐉', 3, S.MELEE, 5, S.RANGED, 5, S.ELEMENTAL, 5, S.HP, -10),
   item('Estrela', '⭐', 3, S.HP, 20, S.ARMOR, 5, S.REGEN, 5),
   item('Coração de Ouro', '💛', 3, S.LUCK, 25, S.HARVEST, 10, S.CRIT, 10),
+  sp(item('Redemoinho', '🌀', 0, S.SPEED, 2), SP_MAGNET, 60, '+60% alcance de coleta'),
+  sp(item('Banana', '🍌', 0, S.HP, 1), SP_FRUIT, 3, 'Frutas curam +3'),
+  sp(item('Rosa', '🌹', 1, S.ARMOR, 1), SP_THORNS, 6, 'Espinhos: 6 de dano em quem encosta'),
+  sp(item('Mapa do Tesouro', '🗺️', 1, S.LUCK, 5), SP_CRATE, 100, '+100% chance de caixas'),
+  sp(item('Fogos', '🎆', 2, S.ELEMENTAL, 1), SP_BOOM, 15, '15% dos inimigos explodem ao morrer'),
+  sp(item('Vulcão', '🌋', 3, S.DAMAGE, 5), SP_BOOM, 35, '35% dos inimigos explodem ao morrer'),
 ];
 
-function charDef(name, icon, tagline, startWeapon, ...mods) { return { name, icon, tagline, startWeapon, mods }; }
+// Desbloqueio: 0 = livre, 1 = chegar na onda X, 2 = vencer X vezes, 3 = derrotar X insetos no total
+const UNLOCK_NONE = 0, UNLOCK_WAVE = 1, UNLOCK_WINS = 2, UNLOCK_KILLS = 3;
+function charDef(name, icon, tagline, startWeapon, ...mods) {
+  return { name, icon, tagline, startWeapon, mods, unlockType: UNLOCK_NONE, unlockValue: 0 };
+}
+function locked(c, type, value) { return Object.assign(c, { unlockType: type, unlockValue: value }); }
+function isUnlocked(c, rec) {
+  if (c.unlockType === UNLOCK_WAVE) return rec.bestWave >= c.unlockValue;
+  if (c.unlockType === UNLOCK_WINS) return rec.wins >= c.unlockValue;
+  if (c.unlockType === UNLOCK_KILLS) return rec.totalKills >= c.unlockValue;
+  return true;
+}
+function unlockText(c) {
+  if (c.unlockType === UNLOCK_WAVE) return 'Chegue na onda ' + c.unlockValue;
+  if (c.unlockType === UNLOCK_WINS) return 'Vença ' + c.unlockValue + (c.unlockValue === 1 ? ' partida' : ' partidas');
+  if (c.unlockType === UNLOCK_KILLS) return 'Derrote ' + c.unlockValue + ' insetos (no total)';
+  return '';
+}
 const CHARS = [
   charDef('Batata Básica', '🥔', 'Sem frescura. Equilibrada.', W.SOCO, S.HP, 2, S.HARVEST, 2),
   charDef('Tomatão', '🍅', 'Grandão e brigão.', W.ESPADA, S.HP, 5, S.MELEE, 3, S.ATK_SPEED, -5, S.SPEED, -5),
@@ -104,9 +136,12 @@ const CHARS = [
   charDef('Milho Atirador', '🌽', 'Pipoca à distância!', W.PISTOLA, S.RANGED, 2, S.RANGE, 40, S.MELEE, -2),
   charDef('Pimenta Ardida', '🌶️', 'Tudo pega fogo.', W.CAJADO, S.ELEMENTAL, 2, S.ATK_SPEED, 10, S.ARMOR, -2),
   charDef('Berinjela Sortuda', '🍆', 'Nasceu virada pra lua.', W.ESTILINGUE, S.LUCK, 25, S.HARVEST, 8, S.DAMAGE, -8),
+  locked(charDef('Abóbora Blindada', '🎃', 'Lenta, mas aguenta tudo.', W.MARTELO, S.HP, 8, S.ARMOR, 4, S.SPEED, -10, S.ATK_SPEED, -10), UNLOCK_WAVE, 10),
+  locked(charDef('Pepino Arqueiro', '🥒', 'Mira de longe, foge de perto.', W.ARCO, S.CRIT, 10, S.RANGE, 60, S.HP, -4), UNLOCK_KILLS, 2000),
+  locked(charDef('Cogumelo Místico', '🍄', 'Magia gelada da floresta.', W.GELO, S.ELEMENTAL, 3, S.REGEN, 3, S.LUCK, 10, S.HP, -2), UNLOCK_WINS, 1),
 ];
 
-const AI_CHASE = 0, AI_SHOOT = 1, AI_CHARGE = 2, AI_BOSS_SNAIL = 3, AI_BOSS_ANT = 4;
+const AI_CHASE = 0, AI_SHOOT = 1, AI_CHARGE = 2, AI_BOSS_SNAIL = 3, AI_BOSS_ANT = 4, AI_ZIGZAG = 5;
 function enemyDef(name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss) {
   return { name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss };
 }
@@ -119,4 +154,18 @@ const E = {
   LESMA_RAINHA: enemyDef('Lesma Rainha', '🐌', AI_BOSS_SNAIL, 900, 60, 4, 0, 64, 40, 10, true),
   FORMIGA_IMPERATRIZ: enemyDef('Formiga Imperatriz', '🐜', AI_BOSS_ANT, 5000, 95, 8, 0, 70, 80, 20, true),
 };
-const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO];
+E.MARIPOSA = enemyDef('Mariposa', '🦋', AI_ZIGZAG, 4, 150, 1, 0.5, 17, 1, 4, false);
+const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO, E.MARIPOSA];
+
+// Dificuldades
+const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo'];
+const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀'];
+const DIFF_DESC = [
+  'Inimigos mais fracos. Bom pra aprender.',
+  'O jogo como ele deve ser.',
+  'Inimigos mais fortes e mais numerosos.',
+  'Mais elites e muito mais dano. Boa sorte!',
+];
+const DIFF_HP = [0.6, 1.15, 1.4, 1.7];
+const DIFF_DMG = [0.6, 1.15, 1.45, 1.8];
+const DIFF_SPAWN = [1.15, 1, 0.9, 0.8];

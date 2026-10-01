@@ -34,18 +34,23 @@ function bot(g) {
   fx += (WORLD_W / 2 - p.x) / 900; fy += (WORLD_H / 2 - p.y) / 900;
   return [fx, fy];
 }
-function runSim(runs) {
-  let wins = 0, total = 0;
+function runSim(runs, diff) {
+  let wins = 0, total = 0, saves = 0;
   for (let r = 0; r < runs; r++) {
     const c = CHARS[r % CHARS.length];
     const pick = makeRng(1000 + r);
     const g = new Game(r + 1);
-    g.newRun(c);
+    g.newRun(c, diff);
     let guard = 0;
     while (g.state !== 'GAME_OVER' && g.state !== 'VICTORY' && guard++ < 2e6) {
       if (g.state === 'PLAYING') { const j = bot(g); g.update(1 / 60, j[0], j[1]); }
       else if (g.state === 'LEVEL_UP') g.chooseLevel(pick.int(4));
+      else if (g.state === 'CRATE') g.resolveCrate(pick.int(3) !== 0);
       else if (g.state === 'SHOP') {
+        const saved = g.saveToString();
+        const copy = new Game(1);
+        if (!copy.loadFromString(saved) || copy.saveToString() !== saved) throw new Error('save/load falhou');
+        saves++;
         for (let pass = 0; pass < 3; pass++) {
           for (let i = 0; i < SHOP_SLOTS; i++) if (g.checkBuy(i) === BUY_OK) g.buy(i);
           for (let i = 0; i < g.player.weapons.length; i++) if (g.canCombine(i)) g.combineWeapon(i);
@@ -59,9 +64,10 @@ function runSim(runs) {
     const won = g.state === 'VICTORY';
     if (won) wins++;
     total += g.wave;
-    console.log(c.name.padEnd(18) + ' -> ' + (won ? 'VENCEU' : 'morreu') + ' na onda ' + g.wave + ' (abates ' + g.kills + ')');
   }
-  console.log('Vitorias: ' + wins + '/' + runs + '  onda media: ' + (total / runs).toFixed(1));
+  console.log(DIFF_NAMES[diff].padEnd(9) + ' vitorias: ' + wins + '/' + runs + '  onda media: ' + (total / runs).toFixed(1) + '  (' + saves + ' saves testados)');
 }
 `);
-runSim(Number(process.argv[2] || 12));
+const runs = Number(process.argv[2] || 12);
+const diffs = process.argv[3] !== undefined ? [Number(process.argv[3])] : [0, 1, 2, 3];
+for (const d of diffs) runSim(runs, d);
