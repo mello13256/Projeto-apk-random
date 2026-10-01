@@ -18,7 +18,7 @@ public final class Game {
     public static final int BUY_FULL = 2;
     public static final int BUY_EMPTY = 3;
 
-    public enum State { MENU, CHAR_SELECT, PLAYING, LEVEL_UP, CRATE, SHOP, GAME_OVER, VICTORY }
+    public enum State { MENU, CHAR_SELECT, PLAYING, LEVEL_UP, CRATE, SHOP, GAME_OVER, VICTORY, RANKING }
 
     // Dificuldades (multiplicadores de vida e dano dos inimigos, e intervalo de nascimento)
     public static final String[] DIFF_NAMES = {"Fácil", "Normal", "Difícil", "Pesadelo"};

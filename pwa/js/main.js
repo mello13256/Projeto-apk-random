@@ -68,6 +68,7 @@
   // --- Teclado ---
   const GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];
   window.addEventListener('keydown', (e) => {
+    if (e.target && e.target.tagName === 'INPUT') return; // digitando o nome do ranking
     sfx.unlock();
     setTouch(false);
     if (GAME_KEYS.includes(e.code)) e.preventDefault();

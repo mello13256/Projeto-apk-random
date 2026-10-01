@@ -85,6 +85,14 @@ final class Prefs {
         e.apply();
     }
 
+    String playerName() {
+        return sp.getString("player_name", "");
+    }
+
+    void setPlayerName(String name) {
+        sp.edit().putString("player_name", name).apply();
+    }
+
     // --- Partida salva ---
 
     String savedRun() {

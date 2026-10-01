@@ -1,0 +1,32 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "ranking": {
+      "$diff": {
+        ".read": "$diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3'",
+        ".indexOn": ["score"],
+        "$id": {
+          ".write": "($diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3') && !data.exists() && newData.exists()",
+          ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
+          },
+          "character": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8" },
+          "wave": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 20" },
+          "won": {
+            ".validate": "newData.isBoolean() && (newData.val() === false || newData.parent().child('wave').val() === 20)"
+          },
+          "kills": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
+          "level": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 300" },
+          "platform": { ".validate": "newData.val() === 'web' || newData.val() === 'android'" },
+          "score": {
+            ".validate": "newData.isNumber() && ((newData.parent().child('won').val() === true && newData.val() === 100000000 + newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()) || (newData.parent().child('won').val() === false && newData.val() === newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()))"
+          },
+          "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
+          "$other": { ".validate": false }
+        }
+      }
+    }
+  }
+}

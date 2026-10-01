@@ -92,6 +92,53 @@ class Ui {
     this.difficulty = prefs.data.lastDiff;
     this.newUnlocks = '';
     this.lastState = null;
+    // Ranking online
+    this.rank = { diff: this.difficulty, loading: false, error: '', entries: null, myId: null };
+    this.submitState = ''; // '', 'sending' ou 'sent'
+  }
+
+  loadRanking(diff) {
+    const r = this.rank;
+    r.diff = diff;
+    r.loading = true;
+    r.error = '';
+    r.entries = null;
+    const token = (r.token = (r.token || 0) + 1);
+    Ranking.top(diff).then((list) => {
+      if (token !== r.token) return;
+      r.entries = list;
+      r.loading = false;
+    }).catch(() => {
+      if (token !== r.token) return;
+      r.loading = false;
+      r.error = navigator.onLine === false ? 'Sem internet. Conecte e toque em Atualizar.' : 'Não deu pra falar com o ranking. Tente Atualizar.';
+    });
+  }
+
+  /** Pergunta o nome e envia a partida que acabou de terminar. */
+  submitScore() {
+    const g = this.game, p = g.player;
+    if (!p || this.submitState) return;
+    askName(this.prefs.data.playerName || '', (name) => {
+      this.prefs.data.playerName = name;
+      this.prefs.save();
+      this.submitState = 'sending';
+      const diff = g.difficulty;
+      Ranking.submit(diff, {
+        name, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY',
+        kills: g.kills, level: p.level, platform: 'web',
+      }).then((id) => {
+        this.submitState = 'sent';
+        this.rank.myId = id;
+        return Ranking.top(diff).then((list) => {
+          const pos = list.findIndex((e) => e.id === id);
+          this.showToast(pos >= 0 ? 'Enviado! Você está em ' + (pos + 1) + 'º lugar no ' + DIFF_NAMES[diff] + '!' : 'Enviado pro ranking!');
+        }, () => this.showToast('Enviado pro ranking!'));
+      }).catch(() => {
+        this.submitState = '';
+        this.showToast(navigator.onLine === false ? 'Sem internet: não deu pra enviar.' : 'Não deu pra enviar. Tente de novo.');
+      });
+    });
   }
 
   unlockedChars() { return CHARS.map((c) => isUnlocked(c, this.prefs.data)); }
@@ -192,6 +239,13 @@ class Ui {
         else if (code === 'KeyN') this.doAction('PLAY');
         else if (code === 'KeyH') this.doAction('HELP');
         else if (code === 'KeyM') this.doAction('MUSIC');
+        else if (code === 'KeyR') this.doAction('RANKING');
+        break;
+      case 'RANKING':
+        if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
+        else if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyQ') this.doAction('RANK_DIFF', -1);
+        else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyE') this.doAction('RANK_DIFF', 1);
+        else if (code === 'KeyR') this.doAction('RANK_REFRESH');
         break;
       case 'CHAR_SELECT':
         if (code === 'ArrowLeft' || code === 'KeyA') pickSlot((sel + slots - 1) % slots);
@@ -223,6 +277,7 @@ class Ui {
       case 'VICTORY':
         if (ok) this.doAction('AGAIN');
         else if (code === 'Escape') this.doAction('MENU');
+        else if (code === 'KeyE') this.doAction('SUBMIT');
         break;
     }
   }
@@ -249,6 +304,11 @@ class Ui {
         if (this.touch) enterMobileFullscreen();
         break;
       case 'APK': location.href = 'HortaHostil.apk'; break;
+      case 'RANKING': g.state = 'RANKING'; this.loadRanking(this.difficulty); break;
+      case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length); break;
+      case 'RANK_TAB': this.loadRanking(arg); break;
+      case 'RANK_REFRESH': this.loadRanking(this.rank.diff); break;
+      case 'SUBMIT': this.submitScore(); break;
       case 'ITEM':
         if (this.tipItem === arg && this.tipTime > 0) this.tipTime = 0;
         else { this.tipItem = arg; this.tipTime = 3; }
@@ -340,6 +400,7 @@ class Ui {
     if (this.tipTime > 0) this.tipTime -= dt;
     if (this.game.state !== this.lastState) {
       if (this.game.state === 'SHOP') this.prefs.saveRun(this.game.saveToString());
+      if (this.game.state === 'GAME_OVER' || this.game.state === 'VICTORY') this.submitState = '';
       this.lastState = this.game.state;
     }
     ctx.save();
@@ -362,6 +423,7 @@ class Ui {
         break;
       case 'LEVEL_UP': this.drawLevelUp(); break;
       case 'CRATE': this.drawCrate(); break;
+      case 'RANKING': this.drawRanking(); break;
       case 'SHOP': this.drawShop(); break;
       default: this.drawEnd();
     }
@@ -370,8 +432,8 @@ class Ui {
       const a = Math.min(1, this.toastTime * 3);
       const w = this.measure(this.toast, 26) + 48;
       ctx.globalAlpha = a;
-      this.roundRect(this.vw / 2 - w / 2, VH - 120, w, 50, 16, 'rgba(20,20,20,0.86)');
-      this.text(this.toast, this.vw / 2, VH - 86, 26, '#FFE678', 'center');
+      this.roundRect(this.vw / 2 - w / 2, VH - 205, w, 50, 16, 'rgba(20,20,20,0.9)', 'rgba(255,230,120,0.5)', 2);
+      this.text(this.toast, this.vw / 2, VH - 171, 26, '#FFE678', 'center');
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -401,18 +463,20 @@ class Ui {
     const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
     const showApk = IS_ANDROID && !IS_STANDALONE;
     const btns = [
+      ['🏆 Ranking', 'RANKING', true],
       [d.sound ? 'Som: SIM' : 'Som: NÃO', 'SOUND', true],
       [d.music ? 'Música: SIM' : 'Música: NÃO', 'MUSIC', true],
       showApk ? ['Baixar app Android', 'APK', true] : ['Tela cheia', 'FULLSCREEN', fsOk],
       ['Como jogar', 'HELP', true],
     ];
-    const bw = 210, gap = 14, bx = cx - (bw * 4 + gap * 3) / 2;
-    btns.forEach(([label, action, en], i) => this.button(bx + i * (bw + gap), 465, bw, 62, label, action, 0, action === 'APK' ? '#2E7D9A' : C.GRAY, en, 25));
+    const gap = 14, bw = Math.min(200, (this.vw - 60 - gap * 4) / 5), bx = cx - (bw * 5 + gap * 4) / 2;
+    const colors = { RANKING: '#B8860B', APK: '#2E7D9A' };
+    btns.forEach(([label, action, en], i) => this.button(bx + i * (bw + gap), 465, bw, 62, label, action, 0, colors[action] || C.GRAY, en, 24));
     this.text('Melhor onda: ' + d.bestWave + '   •   Vitórias: ' + d.wins + '   •   Insetos derrotados: ' + d.totalKills, cx, 580, 24, '#CFE3B8', 'center');
     const unlocked = this.unlockedChars().filter((u) => u).length;
     this.text('Personagens liberados: ' + unlocked + '/' + CHARS.length, cx, 618, 22, '#B8CFA0', 'center');
-    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v2.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  R: ranking  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
+    this.text('Projeto escolar • feito com JavaScript puro • v2.2', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -514,6 +578,52 @@ class Ui {
     this.textFit(DIFF_DESC[this.difficulty] + (this.touch ? '' : '  (Q/E)'), cx, by + 68, 17, pw * 2 - 16, '#CFE3B8');
     const canStart = this.selectedChar === RANDOM_CHAR || unlocked[this.selectedChar];
     this.button(vw - 30 - startW, by + 4, startW, 80, 'COMEÇAR!', 'START', 0, C.GREEN, canStart, 36);
+  }
+
+  // --- Ranking online ---
+
+  drawRanking() {
+    const vw = this.vw, cx = vw / 2, r = this.rank;
+    this.drawMenuBackground();
+    this.text('🏆 RANKING ONLINE', cx, 62, 46, C.GOLD, 'center');
+    // abas de dificuldade
+    const tw = Math.min(220, (vw - 80 - 3 * 12) / 4), tx = cx - (tw * 4 + 36) / 2;
+    for (let i = 0; i < DIFF_NAMES.length; i++) {
+      const sel = i === r.diff;
+      this.button(tx + i * (tw + 12), 88, tw, 58, DIFF_ICONS[i] + ' ' + DIFF_NAMES[i], 'RANK_TAB', i, sel ? '#4CAF50' : C.GRAY, true, 24);
+      if (sel) this.roundRect(tx + i * (tw + 12), 88, tw, 53, 16, null, C.GOLD, 4);
+    }
+    // lista (2 colunas de 10)
+    const top = 168, rowH = 42, colW = Math.min(560, (vw - 90) / 2), x0 = cx - colW - 15;
+    this.roundRect(x0 - 10, top - 8, colW * 2 + 50, rowH * 10 + 16, 16, 'rgba(0,0,0,0.35)');
+    if (r.loading) {
+      this.text('Carregando...', cx, top + 200, 30, '#E8F5D0', 'center');
+    } else if (r.error) {
+      this.text(r.error, cx, top + 200, 26, '#FF9A8A', 'center');
+    } else if (r.entries && r.entries.length === 0) {
+      this.text('Ninguém no ranking do ' + DIFF_NAMES[r.diff] + ' ainda.', cx, top + 185, 28, '#E8F5D0', 'center');
+      this.text('Jogue e seja o primeiro!', cx, top + 225, 24, '#CFE3B8', 'center');
+    } else if (r.entries) {
+      const medals = ['🥇', '🥈', '🥉'];
+      r.entries.slice(0, 20).forEach((e, i) => {
+        const x = x0 + Math.floor(i / 10) * (colW + 30), y = top + (i % 10) * rowH;
+        const mine = e.id === r.myId;
+        if (mine) this.roundRect(x - 4, y, colW, rowH - 4, 10, 'rgba(255,216,74,0.25)', C.GOLD, 2);
+        if (i < 3) this.emoji(medals[i], x + 20, y + 19, 30);
+        else this.text((i + 1) + 'º', x + 20, y + 28, 20, '#CFE3B8', 'center');
+        const ch = CHARS[e.character];
+        if (ch) this.emoji(ch.icon, x + 58, y + 19, 30);
+        this.text(String(e.name || '?').slice(0, 16), x + 82, y + 28, 21, mine ? C.GOLD : '#FFFFFF', 'left');
+        const res = e.won ? '🏆 Venceu' : 'Onda ' + e.wave;
+        this.text(res, x + colW - 150, y + 28, 19, e.won ? C.GOLD : '#E8F5D0', 'right');
+        this.text(shortNum(e.kills) + ' 🐛', x + colW - 58, y + 28, 18, '#CFE3B8', 'right');
+        this.emoji(e.platform === 'android' ? '📱' : '💻', x + colW - 30, y + 18, 22);
+      });
+    }
+    this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
+    this.button(vw - 230, VH - 96, 200, 74, 'Atualizar', 'RANK_REFRESH', 0, C.GRAY, !r.loading, 28);
+    this.text('Ordem: quem venceu, depois a onda alcançada e os insetos derrotados.', cx, VH - 54, 18, 'rgba(255,255,255,0.6)', 'center');
+    if (!this.touch) this.text('Setas: dificuldade  •  R: atualizar  •  Esc: voltar', cx, VH - 26, 16, 'rgba(255,255,255,0.45)', 'center');
   }
 
   // --- Caixa ---
@@ -1134,8 +1244,11 @@ class Ui {
       this.text('🔓 Novo personagem liberado: ' + this.newUnlocks + '!', cx, VH - 150, 28, C.GOLD, 'center');
       this.ctx.globalAlpha = 1;
     }
-    this.button(cx - 360, VH - 120, 340, 84, 'Jogar de novo', 'AGAIN', 0, C.GREEN, true, 34);
-    this.button(cx + 20, VH - 120, 340, 84, 'Menu', 'MENU', 0, C.GRAY, true, 34);
+    const bw = Math.min(330, (this.vw - 100) / 3), gap = 20, bx = cx - (bw * 3 + gap * 2) / 2;
+    this.button(bx, VH - 120, bw, 84, 'Jogar de novo', 'AGAIN', 0, C.GREEN, true, 32);
+    const label = this.submitState === 'sending' ? 'Enviando...' : this.submitState === 'sent' ? 'Enviado ✔' : '🏆 Enviar pro ranking';
+    this.button(bx + bw + gap, VH - 120, bw, 84, label + (this.submitState || this.touch ? '' : ' (E)'), 'SUBMIT', 0, '#B8860B', !this.submitState, 30);
+    this.button(bx + (bw + gap) * 2, VH - 120, bw, 84, 'Menu', 'MENU', 0, C.GRAY, true, 32);
   }
 
   // ------------------------------------------------------------------
@@ -1299,6 +1412,31 @@ function enterMobileFullscreen() {
     const r = req.call(el, { navigationUI: 'hide' });
     if (r && r.then) r.then(lock).catch(() => {});
   } catch (e) { /* ignora */ }
+}
+
+/** Mostra a caixinha HTML para digitar o nome (o canvas não tem campo de texto). */
+function askName(initial, onOk) {
+  const box = document.getElementById('nameBox');
+  const form = document.getElementById('nameForm');
+  const input = document.getElementById('nameInput');
+  const err = document.getElementById('nameErr');
+  if (!box) return;
+  input.value = initial;
+  err.textContent = '';
+  box.hidden = false;
+  setTimeout(() => { input.focus(); input.select(); }, 30);
+  const close = () => { box.hidden = true; form.onsubmit = null; document.getElementById('nameCancel').onclick = null; };
+  document.getElementById('nameCancel').onclick = close;
+  form.onsubmit = (ev) => {
+    ev.preventDefault();
+    const name = input.value.replace(/\s+/g, ' ').trim();
+    if (!Ranking.validName(name)) {
+      err.textContent = 'Use de 2 a 16 letras ou números (sem < > & { } " \\).';
+      return;
+    }
+    close();
+    onOk(name);
+  };
 }
 
 function shortNum(v) {

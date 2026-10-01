@@ -50,6 +50,17 @@ GitHub Pages (em *Settings → Pages*, a origem é **GitHub Actions**).
 Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
 Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
 
+## 🏆 Ranking online
+
+No menu, **🏆 Ranking** mostra os 20 melhores de cada dificuldade (do site e do APK juntos).
+No fim de cada partida, **Enviar pro ranking** pede um nome (2 a 16 letras) e envia a partida.
+A ordem é: quem venceu, depois a onda alcançada e por último os insetos derrotados.
+
+O ranking fica no **Firebase Realtime Database** (plano gratuito), acessado direto pela API REST,
+sem bibliotecas (`pwa/js/ranking.js` no site e `Ranking.java` no APK). As **regras de segurança**
+do banco (em [`firebase-rules.json`](firebase-rules.json)) deixam qualquer um ler e enviar
+pontuações, mas ninguém consegue editar ou apagar, e dados inválidos são recusados.
+
 ## 🎮 Como jogar
 
 - **Arraste o dedo** em qualquer lugar da tela para andar (joystick virtual).

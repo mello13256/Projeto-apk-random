@@ -60,6 +60,33 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
                 });
             }
         });
+        ui.setNet(new Ui.Net() {
+            @Override
+            public void loadRanking(final int diff) {
+                Ranking.top(diff, new Ranking.Callback<java.util.ArrayList<Ui.RankEntry>>() {
+                    @Override
+                    public void done(final java.util.ArrayList<Ui.RankEntry> list, final String error) {
+                        ui.runLater(new Runnable() {
+                            @Override
+                            public void run() {
+                                ui.rankingLoaded(diff, list, error);
+                            }
+                        });
+                    }
+                });
+            }
+
+            @Override
+            public void submitScore(final int diff, final int character, final int wave, final boolean won,
+                                    final int kills, final int level) {
+                post(new Runnable() {
+                    @Override
+                    public void run() {
+                        askNameAndSubmit(diff, character, wave, won, kills, level);
+                    }
+                });
+            }
+        });
         ui.setOnMusicChanged(new Runnable() {
             @Override
             public void run() {
@@ -293,6 +320,74 @@ public final class GameView extends SurfaceView implements SurfaceHolder.Callbac
             }
         }
         ui.setNewUnlocks(sb.toString());
+    }
+
+    /** Mostra a caixa para digitar o nome (thread da interface) e envia a pontuação. */
+    private void askNameAndSubmit(final int diff, final int character, final int wave, final boolean won,
+                                  final int kills, final int level) {
+        final android.widget.EditText input = new android.widget.EditText(getContext());
+        input.setText(prefs.playerName());
+        input.setSelectAllOnFocus(true);
+        input.setSingleLine(true);
+        input.setHint("Seu nome");
+        input.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(16)});
+        int pad = (int) (20 * getResources().getDisplayMetrics().density);
+        android.widget.FrameLayout box = new android.widget.FrameLayout(getContext());
+        box.setPadding(pad, pad / 2, pad, 0);
+        box.addView(input);
+        final boolean[] sent = {false};
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(getContext(),
+                android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("🏆 Enviar pro ranking")
+                .setMessage("Seu nome (aparece pra todo mundo):")
+                .setView(box)
+                .setPositiveButton("Enviar", new android.content.DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(android.content.DialogInterface d, int which) {
+                        String name = input.getText().toString().replaceAll("\\s+", " ").trim();
+                        if (!Ranking.validName(name)) {
+                            finishSubmit(diff, null, "Nome inválido: use de 2 a 16 letras ou números.", null);
+                            sent[0] = true;
+                            return;
+                        }
+                        sent[0] = true;
+                        prefs.setPlayerName(name);
+                        Ranking.submit(diff, name, character, wave, won, kills, level, new Ranking.Callback<String>() {
+                            @Override
+                            public void done(final String id, String error) {
+                                if (error != null) {
+                                    finishSubmit(diff, null, error, null);
+                                    return;
+                                }
+                                Ranking.top(diff, new Ranking.Callback<java.util.ArrayList<Ui.RankEntry>>() {
+                                    @Override
+                                    public void done(java.util.ArrayList<Ui.RankEntry> list, String err) {
+                                        finishSubmit(diff, id, null, list);
+                                    }
+                                });
+                            }
+                        });
+                    }
+                })
+                .setNegativeButton("Cancelar", null)
+                .create();
+        dialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener() {
+            @Override
+            public void onDismiss(android.content.DialogInterface d) {
+                if (!sent[0]) finishSubmit(diff, null, null, null); // cancelou
+            }
+        });
+        dialog.show();
+    }
+
+    private void finishSubmit(final int diff, final String id, final String error,
+                              final java.util.ArrayList<Ui.RankEntry> top) {
+        ui.runLater(new Runnable() {
+            @Override
+            public void run() {
+                ui.scoreSubmitted(diff, id, error, top);
+            }
+        });
     }
 
     /** Liga/desliga a música (chamado pela tela de menu). */

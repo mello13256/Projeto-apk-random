@@ -46,7 +46,8 @@ final class Ui {
             A_BUY = 12, A_LOCK = 13, A_REROLL = 14, A_NEXT = 15, A_WEAPON = 16, A_SELL = 17,
             A_COMBINE = 18, A_CLOSE = 19, A_AGAIN = 20, A_HELP = 21, A_MUSIC = 22,
             A_CONTINUE = 23, A_DIFF = 24, A_CRATE_TAKE = 25, A_CRATE_RECYCLE = 26, A_ITEM = 27,
-            A_RANDOM = 28, A_ONLINE = 29;
+            A_RANDOM = 28, A_ONLINE = 29, A_RANKING = 30, A_RANK_TAB = 31, A_RANK_REFRESH = 32,
+            A_SUBMIT = 33;
     private static final int RANDOM_CHAR = -1;
 
     private static final int[] TIER_COLOR = {0xFFD7D7D7, 0xFF4AA3FF, 0xFFB76BFF, 0xFFFF5A4A};
@@ -110,6 +111,35 @@ final class Ui {
     private Game.State lastState;
     private Runnable onMusicChanged;
     private Runnable onOpenWebsite;
+
+    // --- Ranking online ---
+
+    /** Uma linha do ranking. */
+    static final class RankEntry {
+        String id, name, platform;
+        int character, wave, kills;
+        boolean won;
+        long score, createdAt;
+    }
+
+    /** Quem fala com a internet (o GameView). */
+    interface Net {
+        void loadRanking(int diff);
+
+        /** Pergunta o nome e envia a partida que acabou de terminar. */
+        void submitScore(int diff, int character, int wave, boolean won, int kills, int level);
+    }
+
+    private Net net;
+    private int rankDiff = 1;
+    private boolean rankLoading;
+    private String rankError = "";
+    private ArrayList<RankEntry> rankEntries;
+    private String rankMyId;
+    /** "" = ainda não enviou, "sending" = enviando, "sent" = enviado. */
+    private String submitState = "";
+    /** Resultados que chegam de outras threads e são aplicados na thread do jogo. */
+    private final ArrayList<Runnable> inbox = new ArrayList<>();
     private final Paint vignettePaint = new Paint();
     private final Paint slowPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Paint elitePaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -135,6 +165,59 @@ final class Ui {
         elitePaint.setColorFilter(new PorterDuffColorFilter(0x55FFC400, PorterDuff.Mode.SRC_ATOP));
         selectedChar = prefs.lastChar();
         difficulty = prefs.lastDifficulty();
+    }
+
+    void setNet(Net n) {
+        net = n;
+    }
+
+    /** Executa r na thread do jogo, no próximo quadro (seguro chamar de qualquer thread). */
+    void runLater(Runnable r) {
+        synchronized (inbox) {
+            inbox.add(r);
+        }
+    }
+
+    private void openRanking(int diff) {
+        game.state = Game.State.RANKING;
+        rankDiff = diff;
+        rankLoading = true;
+        rankError = "";
+        rankEntries = null;
+        if (net != null) net.loadRanking(diff);
+        else {
+            rankLoading = false;
+            rankError = "Ranking indisponível.";
+        }
+    }
+
+    /** Chamado (via runLater) quando o ranking chega da internet. */
+    void rankingLoaded(int diff, ArrayList<RankEntry> list, String error) {
+        if (diff != rankDiff) return;
+        rankLoading = false;
+        rankEntries = list;
+        rankError = error == null ? "" : error;
+    }
+
+    /** Chamado (via runLater) depois de tentar enviar a pontuação. */
+    void scoreSubmitted(int diff, String id, String error, ArrayList<RankEntry> top) {
+        if (error != null) {
+            submitState = "";
+            showToast(error);
+            return;
+        }
+        if (id == null) { // o jogador cancelou
+            submitState = "";
+            return;
+        }
+        submitState = "sent";
+        rankMyId = id;
+        int pos = -1;
+        if (top != null) {
+            for (int i = 0; i < top.size(); i++) if (id.equals(top.get(i).id)) pos = i;
+        }
+        showToast(pos >= 0 ? "Enviado! Você está em " + (pos + 1) + "º lugar no " + Game.DIFF_NAMES[diff] + "!"
+                : "Enviado pro ranking!");
     }
 
     /** Abre a versão online (site no GitHub Pages). */
@@ -254,6 +337,7 @@ final class Ui {
             case CHAR_SELECT:
             case GAME_OVER:
             case VICTORY:
+            case RANKING:
                 game.state = Game.State.MENU;
                 return true;
             default:
@@ -304,6 +388,22 @@ final class Ui {
                 break;
             case A_ONLINE:
                 if (onOpenWebsite != null) onOpenWebsite.run();
+                break;
+            case A_RANKING:
+                openRanking(difficulty);
+                break;
+            case A_RANK_TAB:
+                openRanking(arg);
+                break;
+            case A_RANK_REFRESH:
+                openRanking(rankDiff);
+                break;
+            case A_SUBMIT:
+                if (p != null && submitState.isEmpty() && net != null) {
+                    submitState = "sending";
+                    net.submitScore(game.difficulty, indexOfChar(p.character), game.wave,
+                            game.state == Game.State.VICTORY, game.kills, p.level);
+                }
                 break;
             case A_CHAR:
                 selectedChar = arg;
@@ -445,8 +545,13 @@ final class Ui {
     void draw(Canvas c, float dt) {
         time += dt;
         if (tipTime > 0f) tipTime -= dt;
+        synchronized (inbox) {
+            for (Runnable r : inbox) r.run();
+            inbox.clear();
+        }
         if (game.state != lastState) {
             if (game.state == Game.State.SHOP) prefs.saveRun(game.saveToString());
+            if (game.state == Game.State.GAME_OVER || game.state == Game.State.VICTORY) submitState = "";
             lastState = game.state;
         }
         if (toastTime > 0f) toastTime -= dt;
@@ -479,14 +584,17 @@ final class Ui {
             case VICTORY:
                 drawEnd(c);
                 break;
+            case RANKING:
+                drawRanking(c);
+                break;
         }
         if (toastTime > 0f && !toast.isEmpty()) {
             float a = Math.min(1f, toastTime * 3f);
             float w = measure(toast, 26) + 48;
             fill.setColor(Color.argb((int) (220 * a), 20, 20, 20));
-            rect.set(vw / 2 - w / 2, VH - 120, vw / 2 + w / 2, VH - 70);
+            rect.set(vw / 2 - w / 2, VH - 205, vw / 2 + w / 2, VH - 155);
             c.drawRoundRect(rect, 16, 16, fill);
-            text(c, toast, vw / 2, VH - 86, 26, Color.argb((int) (255 * a), 255, 230, 120),
+            text(c, toast, vw / 2, VH - 171, 26, Color.argb((int) (255 * a), 255, 230, 120),
                     Paint.Align.CENTER);
         }
         c.restore();
@@ -511,11 +619,14 @@ final class Ui {
             String wave = "";
             int i = saved.indexOf("wave=");
             if (i >= 0) wave = saved.substring(i + 5, saved.indexOf('\n', i));
-            button(c, cx - 350, 335, 340, 90, "CONTINUAR", A_CONTINUE, 0, C_GREEN, true, 40);
-            text(c, "depois da onda " + wave, cx - 180, 446, 20, 0xFFCFE3B8, Paint.Align.CENTER);
-            button(c, cx + 10, 335, 340, 90, "NOVO JOGO", A_PLAY, 0, C_ORANGE, true, 40);
+            float mw = Math.min(300, (vw - 80) / 3), mx = cx - (mw * 3 + 40) / 2;
+            button(c, mx, 335, mw, 90, "CONTINUAR", A_CONTINUE, 0, C_GREEN, true, 38);
+            text(c, "depois da onda " + wave, mx + mw / 2, 446, 20, 0xFFCFE3B8, Paint.Align.CENTER);
+            button(c, mx + mw + 20, 335, mw, 90, "NOVO JOGO", A_PLAY, 0, C_ORANGE, true, 38);
+            button(c, mx + (mw + 20) * 2, 335, mw, 90, "🏆 RANKING", A_RANKING, 0, 0xFFB8860B, true, 38);
         } else {
-            button(c, cx - 170, 335, 340, 90, "JOGAR", A_PLAY, 0, C_GREEN, true, 44);
+            button(c, cx - 350, 335, 340, 90, "JOGAR", A_PLAY, 0, C_GREEN, true, 44);
+            button(c, cx + 10, 335, 340, 90, "🏆 RANKING", A_RANKING, 0, 0xFFB8860B, true, 40);
         }
 
         float gap = 14, bw = Math.min(196, (vw - 60 - gap * 4) / 5), bx = cx - (bw * 5 + gap * 4) / 2;
@@ -536,7 +647,7 @@ final class Ui {
                 0xFFB8CFA0, Paint.Align.CENTER);
         text(c, "Online: " + WEBSITE.replace("https://", ""), cx, 656, 18, 0x88CFE3B8,
                 Paint.Align.CENTER);
-        text(c, "Projeto escolar • feito com Java puro • v2.1", cx, 692, 20, 0x99FFFFFF,
+        text(c, "Projeto escolar • feito com Java puro • v2.2", cx, 692, 20, 0x99FFFFFF,
                 Paint.Align.CENTER);
         if (showHelp) drawHelp(c);
     }
@@ -662,6 +773,71 @@ final class Ui {
         textFit(c, DIFF_DESC[difficulty], cx, by + 68, 17, pw * 2 - 16, 0xFFCFE3B8);
         boolean canStart = selectedChar == RANDOM_CHAR || unlocked[selectedChar];
         button(c, vw - 30 - startW, by + 4, startW, 80, "COMEÇAR!", A_START, 0, C_GREEN, canStart, 36);
+    }
+
+    // --- Ranking online ---
+
+    private static int indexOfChar(CharDef cd) {
+        for (int i = 0; i < CharDef.ALL.length; i++) if (CharDef.ALL[i] == cd) return i;
+        return 0;
+    }
+
+    private void drawRanking(Canvas c) {
+        float cx = vw / 2;
+        drawMenuBackground(c);
+        text(c, "🏆 RANKING ONLINE", cx, 62, 46, 0xFFFFD84A, Paint.Align.CENTER);
+        float tw = Math.min(220, (vw - 80 - 36) / 4), tx = cx - (tw * 4 + 36) / 2;
+        for (int i = 0; i < Game.DIFF_NAMES.length; i++) {
+            boolean sel = i == rankDiff;
+            button(c, tx + i * (tw + 12), 88, tw, 58, Game.DIFF_ICONS[i] + " " + Game.DIFF_NAMES[i], A_RANK_TAB, i,
+                    sel ? C_GREEN : C_GRAY, true, 24);
+            if (sel) {
+                stroke.setColor(0xFFFFD84A);
+                stroke.setStrokeWidth(4);
+                rect.set(tx + i * (tw + 12), 88, tx + i * (tw + 12) + tw, 141);
+                c.drawRoundRect(rect, 16, 16, stroke);
+            }
+        }
+        float top = 168, rowH = 42, colW = Math.min(560, (vw - 90) / 2), x0 = cx - colW - 15;
+        fill.setColor(0x59000000);
+        rect.set(x0 - 10, top - 8, x0 - 10 + colW * 2 + 50, top + rowH * 10 + 8);
+        c.drawRoundRect(rect, 16, 16, fill);
+        if (rankLoading) {
+            text(c, "Carregando...", cx, top + 200, 30, 0xFFE8F5D0, Paint.Align.CENTER);
+        } else if (!rankError.isEmpty()) {
+            textFit(c, rankError, cx, top + 200, 26, colW * 2, 0xFFFF9A8A);
+        } else if (rankEntries != null && rankEntries.isEmpty()) {
+            text(c, "Ninguém no ranking do " + Game.DIFF_NAMES[rankDiff] + " ainda.", cx, top + 185, 28,
+                    0xFFE8F5D0, Paint.Align.CENTER);
+            text(c, "Jogue e seja o primeiro!", cx, top + 225, 24, 0xFFCFE3B8, Paint.Align.CENTER);
+        } else if (rankEntries != null) {
+            String[] medals = {"🥇", "🥈", "🥉"};
+            for (int i = 0; i < Math.min(20, rankEntries.size()); i++) {
+                RankEntry e = rankEntries.get(i);
+                float x = x0 + (i / 10) * (colW + 30), y = top + (i % 10) * rowH;
+                boolean mine = e.id.equals(rankMyId);
+                if (mine) {
+                    fill.setColor(0x40FFD84A);
+                    rect.set(x - 4, y, x - 4 + colW, y + rowH - 4);
+                    c.drawRoundRect(rect, 10, 10, fill);
+                }
+                if (i < 3) emoji(c, medals[i], x + 20, y + 19, 30, bmpPaint);
+                else text(c, (i + 1) + "º", x + 20, y + 28, 20, 0xFFCFE3B8, Paint.Align.CENTER);
+                if (e.character >= 0 && e.character < CharDef.ALL.length) {
+                    emoji(c, CharDef.ALL[e.character].icon, x + 58, y + 19, 30, bmpPaint);
+                }
+                String name = e.name.length() > 16 ? e.name.substring(0, 16) : e.name;
+                text(c, name, x + 82, y + 28, 21, mine ? 0xFFFFD84A : 0xFFFFFFFF, Paint.Align.LEFT);
+                text(c, e.won ? "🏆 Venceu" : "Onda " + e.wave, x + colW - 150, y + 28, 19,
+                        e.won ? 0xFFFFD84A : 0xFFE8F5D0, Paint.Align.RIGHT);
+                text(c, shortNum(e.kills) + " 🐛", x + colW - 58, y + 28, 18, 0xFFCFE3B8, Paint.Align.RIGHT);
+                emoji(c, "android".equals(e.platform) ? "📱" : "💻", x + colW - 30, y + 18, 22, bmpPaint);
+            }
+        }
+        button(c, 30, VH - 96, 200, 74, "Voltar", A_MENU, 0, C_GRAY, true, 30);
+        button(c, vw - 230, VH - 96, 200, 74, "Atualizar", A_RANK_REFRESH, 0, C_GRAY, !rankLoading, 28);
+        text(c, "Ordem: quem venceu, depois a onda alcançada e os insetos derrotados.", cx, VH - 50, 18,
+                0x99FFFFFF, Paint.Align.CENTER);
     }
 
     // --- Caixa ---
@@ -1485,8 +1661,12 @@ final class Ui {
             text(c, "🔓 Novo personagem liberado: " + newUnlocks + "!", cx, VH - 150, 28,
                     Color.argb((int) (255 * a), 255, 216, 74), Paint.Align.CENTER);
         }
-        button(c, cx - 360, VH - 120, 340, 84, "Jogar de novo", A_AGAIN, 0, C_GREEN, true, 34);
-        button(c, cx + 20, VH - 120, 340, 84, "Menu", A_MENU, 0, C_GRAY, true, 34);
+        float bw = Math.min(330, (vw - 100) / 3), bx = cx - (bw * 3 + 40) / 2;
+        button(c, bx, VH - 120, bw, 84, "Jogar de novo", A_AGAIN, 0, C_GREEN, true, 32);
+        String label = submitState.equals("sending") ? "Enviando..." : submitState.equals("sent") ? "Enviado ✔"
+                : "🏆 Enviar pro ranking";
+        button(c, bx + bw + 20, VH - 120, bw, 84, label, A_SUBMIT, 0, 0xFFB8860B, submitState.isEmpty(), 30);
+        button(c, bx + (bw + 20) * 2, VH - 120, bw, 84, "Menu", A_MENU, 0, C_GRAY, true, 32);
     }
 
     // ------------------------------------------------------------------
