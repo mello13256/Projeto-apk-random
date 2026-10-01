@@ -58,7 +58,9 @@ class Multiplayer {
     this.readySlots = [];        // convidado: quem está pronto (vem do anfitrião)
     this.breakWave = 0;          // convidado: última onda cujo intervalo já começou
     this.psSeen = '';
-    this.relayBusy = false; this.relayDirty = false;
+    this.relayBusy = {};         // escritas no Firebase em andamento (por caminho)
+    this.relayAcc = 0; this.relayEv = [];
+    this.sentAt = new Map(); this.ping = 0;
     this.rosterBusy = false; this.rosterDirty = false;
     this.lastSnapAt = 0; this.hostSeenAt = 0; this.hostHb = null;
     this.enemyMap = new Map();
@@ -326,9 +328,9 @@ class Multiplayer {
     if (d.q <= r.lastInQ) return;
     r.lastInQ = d.q;
     const p = g.players.find((x) => x.id === id);
+    r.ping = d.pg | 0;
     if (!p || !p.alive) return;
-    p.tx = clamp(+d.x || 0, p.radius, WORLD_W - p.radius);
-    p.ty = clamp(+d.y || 0, p.radius, WORLD_H - p.radius);
+    netTrack(p, clamp(+d.x || 0, p.radius, WORLD_W - p.radius), clamp(+d.y || 0, p.radius, WORLD_H - p.radius), +d.tm || now());
     p.facingLeft = !!(d.f & 1);
     p.moving = !!(d.f & 2);
     p.lookX = (d.lx | 0) / 100; p.lookY = (d.ly | 0) / 100;
@@ -357,7 +359,7 @@ class Multiplayer {
     if (meta.st === 'closed') { this.leave('O anfitrião fechou a sala.'); return; }
     if (meta.hb !== this.hostHb) { this.hostHb = meta.hb; this.hostSeenAt = now(); }
     this.diff = meta.diff | 0;
-    if (path === '/snap') { if (!(this.hostPeer && this.hostPeer.isOpen())) this.onSnap(value); return; }
+    if (path === '/snap') { this.onSnap(value); return; }
     // lista de jogadores
     const ro = data.roster || {};
     this.roster = Object.keys(ro).map((id) => {
@@ -540,9 +542,15 @@ class Multiplayer {
       if (!this.inGame) return;
       if (g.state === 'SHOP') this.tryNextWave();
       const relay = this.roster.some((r) => !r.host && !r.conn);
-      const interval = g.state === 'PLAYING' ? (relay ? 1 / 8 : 1 / 15) : 0.5;
+      const playing = g.state === 'PLAYING';
       this.sendAcc += dt;
-      if (this.sendAcc >= interval) { this.sendAcc = 0; this.sendSnap(relay); }
+      this.relayAcc += dt;
+      if (this.sendAcc >= (playing ? 1 / 20 : 0.5)) {
+        this.sendAcc = 0;
+        const relayNow = relay && this.relayAcc >= (playing ? 1 / 10 : 0.5);
+        if (relayNow) this.relayAcc = 0;
+        this.sendSnap(relay, relayNow);
+      }
     } else {
       if (t - this.hostSeenAt > HOST_TIMEOUT && t - this.lastSnapAt > HOST_TIMEOUT) {
         this.leave('Perdemos a conexão com o anfitrião.');
@@ -555,7 +563,7 @@ class Multiplayer {
       if (this.inGame && g.state === 'PLAYING') {
         const direct = !!(this.hostPeer && this.hostPeer.isOpen());
         this.sendAcc += dt;
-        if (this.sendAcc >= (direct ? 1 / 15 : 1 / 8)) { this.sendAcc = 0; this.sendInput(direct); }
+        if (this.sendAcc >= (direct ? 1 / 20 : 1 / 10)) { this.sendAcc = 0; this.sendInput(direct); }
       }
     }
   }
@@ -566,33 +574,51 @@ class Multiplayer {
   }
 
   sendInput(direct) {
-    const g = this.game, p = g.player;
+    const g = this.game, p = g.player, t = now();
+    const q = ++this.inSeq;
+    this.sentAt.set(q, t);
+    if (this.sentAt.size > 80) this.sentAt.delete(this.sentAt.keys().next().value);
     const s = JSON.stringify({
-      gid: this.gid, w: g.wave, q: ++this.inSeq, x: Math.round(p.x), y: Math.round(p.y),
+      gid: this.gid, w: g.wave, q, tm: Math.round(t), pg: Math.round(this.ping), x: Math.round(p.x), y: Math.round(p.y),
       f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0), lx: Math.round(p.lookX * 100), ly: Math.round(p.lookY * 100),
     });
     if (direct && this.hostPeer.send('i' + s, false)) return;
     this.relayPut('g/' + this.pid + '/in', s);
   }
 
-  /** Escreve no Firebase sem acumular pedidos (se o anterior não terminou, pula). */
+  /** Escreve no Firebase; até 3 pedidos ao mesmo tempo (quem recebe ignora os velhos pelo número). */
   relayPut(p, value) {
-    if (this.relayBusy) return;
-    this.relayBusy = true;
-    Fb.put(this.path(p), value).catch(() => {}).then(() => { this.relayBusy = false; });
+    if ((this.relayBusy[p] || 0) >= 3) return;
+    this.relayBusy[p] = (this.relayBusy[p] || 0) + 1;
+    Fb.put(this.path(p), value).catch(() => {}).then(() => { this.relayBusy[p]--; });
   }
 
-  sendSnap(relay) {
-    const s = this.buildSnap();
-    for (const r of this.roster) if (r.peer && r.conn) r.peer.send('s' + s, false);
-    if (relay) this.relayPut('h/snap', s);
+  /** Manda a arena: direto 20x/s; pelo servidor 10x/s (juntando os efeitos do meio). */
+  sendSnap(relay, relayNow) {
+    const o = this.buildSnap();
+    const direct = this.roster.filter((r) => r.peer && r.conn);
+    if (direct.length) {
+      const s = JSON.stringify(o);
+      for (const r of direct) r.peer.send('s' + s, false);
+    }
+    if (!relay) { this.relayEv.length = 0; return; }
+    if (o.ev) for (const ev of o.ev) this.relayEv.push(ev);
+    if (!relayNow) return;
+    if (o.ev) o.ev = this.relayEv.length > 200 ? this.relayEv.slice(-200) : this.relayEv;
+    this.relayPut('h/snap', JSON.stringify(o));
+    this.relayEv = [];
   }
 
   /** Foto da arena, em números inteiros para ficar pequena. */
   buildSnap() {
     const g = this.game, R = Math.round;
     const ph = g.state === 'PLAYING' ? 'P' : g.state === 'VICTORY' ? 'V' : g.state === 'GAME_OVER' ? 'O' : 'B';
-    const o = { gid: this.gid, q: ++this.seq, w: g.wave, ph, k: g.kills };
+    const o = { gid: this.gid, q: ++this.seq, w: g.wave, ph, k: g.kills, tm: Math.round(now()) };
+    // última posição recebida de cada convidado (para medir o ping)
+    o.ak = this.roster.filter((r) => !r.host && r.lastInQ > 0).map((r) => {
+      const p = g.players.find((x) => x.id === r.id);
+      return [p ? p.slot : -1, r.lastInQ];
+    });
     o.p = g.players.map((p) => {
       const a = [p.slot, R(p.x), R(p.y), Math.max(0, Math.ceil(p.hp)), p.maxHp(),
         (p.alive ? 1 : 0) | (p.iframes > 0 ? 2 : 0) | (p.facingLeft ? 4 : 0) | (p.moving ? 8 : 0),
@@ -638,7 +664,7 @@ class Multiplayer {
       o.rd = rd;
     }
     if (g.rec) g.rec.length = 0;
-    return JSON.stringify(o);
+    return o;
   }
 
   // ------------------------------------------------------------------
@@ -654,6 +680,17 @@ class Multiplayer {
     this.lastSnapAt = now();
     this.hostSeenAt = now();
     const g = this.game;
+    // ping: tempo até o anfitrião confirmar a última posição que mandei
+    const me = g.player;
+    for (const a of o.ak || []) {
+      if (!me || a[0] !== me.slot) continue;
+      const sent = this.sentAt.get(a[1]);
+      if (sent !== undefined) {
+        const rtt = now() - sent;
+        this.ping = this.ping ? this.ping * 0.85 + rtt * 0.15 : rtt;
+        this.sentAt.delete(a[1]);
+      }
+    }
     if (o.ph === 'O' || o.ph === 'V') {
       if (g.state !== 'GAME_OVER' && g.state !== 'VICTORY') {
         g.wave = o.w; g.kills = o.k;
@@ -711,7 +748,7 @@ class Multiplayer {
         if (a[10] > this.lastShots && playing) this.game.fx.sound('SHOOT');
         this.lastShots = a[10];
       } else {
-        p.tx = a[1]; p.ty = a[2];
+        netTrack(p, a[1], a[2], o.tm || now());
         if (playing && (Math.abs(p.x - p.tx) > 400 || Math.abs(p.y - p.ty) > 400 || this.placeMe)) { p.x = p.tx; p.y = p.ty; }
         p.facingLeft = !!(a[5] & 4); p.moving = !!(a[5] & 8);
         p.lookX = a[11] / 100; p.lookY = a[12] / 100;
@@ -757,7 +794,7 @@ class Multiplayer {
         en = { id, def, x: e[i + 2], y: e[i + 3], vx: 0, vy: 0, maxHp: 1000, hp: 1000, radius: def.radius * (elite ? 1.35 : 1),
           anim: Math.random() * 3, flash: 0, dead: false, burnTime: 0, slowTime: 0, aiState: 0, elite, facingLeft: true };
       }
-      en.tx = e[i + 2]; en.ty = e[i + 3];
+      netTrack(en, e[i + 2], e[i + 3], o.tm || now());
       en.hp = e[i + 4];
       const f = e[i + 5];
       en.elite = elite;
@@ -827,9 +864,8 @@ class Multiplayer {
         w.tipX = p.x + w.ox; w.tipY = p.y + w.oy;
       }
     }
-    const k = Math.min(1, dt * 12);
     for (const e of g.enemies) {
-      e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k;
+      netStep(e, dt, 0.12, 20); // prevê o movimento até a próxima foto
       e.anim += dt;
       if (e.flash > 0) e.flash -= dt;
     }

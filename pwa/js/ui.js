@@ -1232,6 +1232,12 @@ class Ui {
     this.text(String(left), vw / 2, 96, 56, left <= 5 ? '#FF6A5A' : '#FFFFFF', 'center');
 
     this.button(vw - 86, 16, 68, 68, 'II', 'PAUSE', 0, 'rgba(51,51,51,0.67)', true, 30);
+    if (g.coop && this.mp.isGuest()) {
+      // ping: tempo de ida e volta até o dono da sala
+      const ms = Math.round(this.mp.ping), direct = !!(this.mp.hostPeer && this.mp.hostPeer.isOpen());
+      const color = !ms ? '#CFCFCF' : ms < 120 ? '#8CF08C' : ms < 250 ? '#FFE678' : '#FF8A7A';
+      this.text((ms ? ms + ' ms' : '...') + (direct ? ' ⚡' : ' 🌐'), vw - 100, 60, 22, color, 'right');
+    }
 
     const boss = g.boss;
     if (boss && !boss.dead) {
@@ -1279,6 +1285,10 @@ class Ui {
       this.emoji(p.alive ? p.character.icon : '👻', x + 16, y + 14, 30);
       this.ctx.globalAlpha = 1;
       this.text(p.name, x + 38, y + 12, 17, color, 'left');
+      if (this.mp.isHost()) {
+        const r = this.mp.roster.find((q) => q.id === p.id);
+        if (r && r.ping) this.text(r.ping + ' ms' + (r.conn ? ' ⚡' : ' 🌐'), x + 154, y + 12, 14, r.ping < 120 ? '#8CF08C' : r.ping < 250 ? '#FFE678' : '#FF8A7A', 'right');
+      }
       if (p.alive) this.bar(x + 40, y + 19, 110, 8, p.hp / p.maxHp(), '#E0413A', '#3A1210');
       else this.text('caiu', x + 40, y + 31, 15, '#FF8A7A', 'left');
       y += 42;

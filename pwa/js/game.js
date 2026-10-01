@@ -618,11 +618,11 @@ class Game {
     p.y = clamp(p.y, p.radius, WORLD_H - p.radius);
   }
 
-  /** Jogador de outro computador: desliza até a última posição recebida. */
+  /** Jogador de outro computador: segue a posição recebida, prevendo o movimento enquanto a próxima não chega. */
   followNet(p, dt) {
-    const k = Math.min(1, dt * 14);
-    p.x += (p.tx - p.x) * k;
-    p.y += (p.ty - p.y) * k;
+    netStep(p, dt, 0.15, 18);
+    p.x = clamp(p.x, p.radius, WORLD_W - p.radius);
+    p.y = clamp(p.y, p.radius, WORLD_H - p.radius);
     if (p.moving) p.moveAnim += dt * 12;
   }
 
@@ -798,7 +798,7 @@ class Game {
       e.y = clamp(e.y, e.radius * 0.5, WORLD_H - e.radius * 0.5);
       for (const q of ps) {
         if (!q.alive) continue;
-        const r = e.radius + q.radius - 8;
+        const r = e.radius + q.radius - (q.remote ? 16 : 8); // quem está longe tem um pouco de folga (atraso da rede)
         if ((q.x - e.x) * (q.x - e.x) + (q.y - e.y) * (q.y - e.y) < r * r) this.damagePlayer(q, e.damage, e);
       }
     }
@@ -1060,7 +1060,7 @@ class Game {
       if (b.life <= 0 || b.x < -30 || b.y < -30 || b.x > WORLD_W + 30 || b.y > WORLD_H + 30) { b.dead = true; continue; }
       for (const p of this.players) {
         if (!p.alive) continue;
-        const r = p.radius * 0.8 + b.radius;
+        const r = p.radius * (p.remote ? 0.6 : 0.8) + b.radius;
         const dx = p.x - b.x, dy = p.y - b.y;
         if (dx * dx + dy * dy < r * r) { b.dead = true; this.damagePlayer(p, b.damage); break; }
       }
@@ -1291,6 +1291,38 @@ class Game {
     }
     return best;
   }
+}
+
+/**
+ * Posição que chegou pela rede (tm = relógio de quem mandou, em ms).
+ * Guarda a velocidade para prever o movimento até a próxima mensagem.
+ */
+function netTrack(o, x, y, tm) {
+  const gap = (tm - o.ntm) / 1000;
+  if (o.ntm !== undefined && gap > 0.005 && gap < 0.6) {
+    o.nvx = clamp((x - o.nx) / gap, -900, 900);
+    o.nvy = clamp((y - o.ny) / gap, -900, 900);
+  } else if (!(gap > 0)) {
+    o.nvx = o.nvx || 0; o.nvy = o.nvy || 0;
+  } else {
+    o.nvx = 0; o.nvy = 0;
+  }
+  if (Math.abs(x - o.nx) > 300 || Math.abs(y - o.ny) > 300) { o.nvx = 0; o.nvy = 0; }
+  o.nx = x; o.ny = y; o.ntm = tm;
+  o.tx = x; o.ty = y; o.nAge = 0;
+}
+
+/** Avança a previsão (no máximo "ahead" segundos) e desliza o desenho até ela. */
+function netStep(o, dt, ahead, speed) {
+  if (o.nAge === undefined) o.nAge = 0;
+  if (o.nAge < ahead && o.nvx !== undefined) {
+    const s = Math.min(dt, ahead - o.nAge);
+    o.tx += o.nvx * s; o.ty += o.nvy * s;
+  }
+  o.nAge += dt;
+  const k = Math.min(1, dt * speed);
+  o.x += (o.tx - o.x) * k;
+  o.y += (o.ty - o.y) * k;
 }
 
 function waveBanner(n) {
