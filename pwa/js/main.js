@@ -10,7 +10,9 @@
   sfx.musicOn = prefs.data.music;
   const game = new Game();
   const ui = new Ui(game, prefs, sfx);
-  window.hortaHostil = { game, ui }; // útil para depurar no console
+  const mp = new Multiplayer(game, ui);
+  ui.mp = mp;
+  window.hortaHostil = { game, ui, mp }; // útil para depurar no console
 
   game.fx = {
     sound: (id) => sfx.play(id),
@@ -78,14 +80,17 @@
   });
   window.addEventListener('keyup', (e) => ui.keys.delete(e.code));
 
-  // Pausa sozinho se a janela perder o foco
+  // Pausa sozinho se a janela perder o foco (no multiplayer não dá pra pausar)
   const autoPause = () => {
     ui.releaseAll();
-    if (game.state === 'PLAYING') game.paused = true;
+    if (game.state === 'PLAYING' && !game.coop) game.paused = true;
     ui.saveIfPossible();
   };
   window.addEventListener('blur', autoPause);
-  window.addEventListener('pagehide', () => ui.saveIfPossible());
+  window.addEventListener('pagehide', (e) => {
+    ui.saveIfPossible();
+    if (!e.persisted) mp.leave(null, true); // fechou a aba: sai da sala
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       autoPause();
@@ -104,17 +109,28 @@
     acc += dt;
     let steps = 0;
     while (acc >= STEP && steps < 5) {
-      const [jx, jy] = ui.moveVector();
-      game.update(STEP, jx, jy);
+      const [jx, jy] = ui.menuOpen() ? [0, 0] : ui.moveVector();
+      if (mp.isGuest() && mp.inGame) mp.guestStep(STEP, jx, jy); // convidado: a arena vem do anfitrião
+      else game.update(STEP, jx, jy);
       acc -= STEP;
       steps++;
     }
     if (steps === 5) acc = 0;
+    mp.tick(dt);
     const hovering = ui.draw(ctx, dt);
     canvas.style.cursor = hovering ? 'pointer' : 'default';
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // --- Link de convite (?sala=CODIGO) ou atalho para o multiplayer (#mp, usado pelo app Android) ---
+  const params = new URLSearchParams(location.search);
+  const room = (params.get('sala') || '').toUpperCase();
+  if (validCode(room) || location.hash === '#mp') {
+    game.state = 'MP_MENU';
+    if (validCode(room)) setTimeout(() => ui.mpJoin(room), 300);
+    if (params.has('sala')) history.replaceState(null, '', location.pathname + (params.get('db') ? '?db=' + encodeURIComponent(params.get('db')) : ''));
+  }
 
   // --- PWA: funciona offline depois da primeira visita ---
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

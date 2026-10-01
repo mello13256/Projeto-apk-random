@@ -39,6 +39,8 @@ final class Ui {
     static final float VH = 720f;
     /** Versão online do jogo (publicada pelo GitHub Pages). */
     static final String WEBSITE = "https://mello13256.github.io/Projeto-apk-random/";
+    /** O multiplayer roda no site: o app abre direto na tela de multiplayer. */
+    static final String MULTIPLAYER_URL = WEBSITE + "#mp";
 
     // Acoes dos botoes
     private static final int A_PLAY = 1, A_SOUND = 2, A_VIBRA = 3, A_CHAR = 4, A_START = 5,
@@ -220,7 +222,7 @@ final class Ui {
                 : "Enviado pro ranking!");
     }
 
-    /** Abre a versão online (site no GitHub Pages). */
+    /** Abre o multiplayer no site (GitHub Pages). */
     void setOnOpenWebsite(Runnable r) {
         onOpenWebsite = r;
     }
@@ -636,7 +638,7 @@ final class Ui {
         button(c, bx + (bw + gap) * 2, 465, bw, 62, prefs.vibration() ? "Vibrar: SIM" : "Vibrar: NÃO", A_VIBRA,
                 0, C_GRAY, true, 24);
         button(c, bx + (bw + gap) * 3, 465, bw, 62, "Como jogar", A_HELP, 0, C_GRAY, true, 24);
-        button(c, bx + (bw + gap) * 4, 465, bw, 62, "Jogar online", A_ONLINE, 0, 0xFF2E7D9A, true, 24);
+        button(c, bx + (bw + gap) * 4, 465, bw, 62, "👥 Multiplayer", A_ONLINE, 0, 0xFF2E7D9A, true, 24);
 
         String rec = "Melhor onda: " + prefs.bestWave() + "   •   Vitórias: " + prefs.wins()
                 + "   •   Insetos derrotados: " + prefs.totalKills();
@@ -645,9 +647,9 @@ final class Ui {
         for (boolean b : unlockedChars()) if (b) unlocked++;
         text(c, "Personagens liberados: " + unlocked + "/" + CharDef.ALL.length, cx, 618, 22,
                 0xFFB8CFA0, Paint.Align.CENTER);
-        text(c, "Online: " + WEBSITE.replace("https://", ""), cx, 656, 18, 0x88CFE3B8,
+        text(c, "Multiplayer e versão online: " + WEBSITE.replace("https://", ""), cx, 656, 18, 0x88CFE3B8,
                 Paint.Align.CENTER);
-        text(c, "Projeto escolar • feito com Java puro • v2.2", cx, 692, 20, 0x99FFFFFF,
+        text(c, "Projeto escolar • feito com Java puro • v2.3", cx, 692, 20, 0x99FFFFFF,
                 Paint.Align.CENTER);
         if (showHelp) drawHelp(c);
     }

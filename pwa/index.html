@@ -39,13 +39,13 @@
   <canvas id="game" aria-label="Horta Hostil"></canvas>
   <div id="nameBox" hidden>
     <form id="nameForm" autocomplete="off">
-      <h2>🏆 Enviar pro ranking</h2>
-      <label for="nameInput">Seu nome (aparece pra todo mundo):</label>
-      <input id="nameInput" maxlength="16" minlength="2" required enterkeyhint="send" spellcheck="false">
+      <h2 id="nameTitle">🏆 Enviar pro ranking</h2>
+      <label for="nameInput" id="nameLabel">Seu nome (aparece pra todo mundo):</label>
+      <input id="nameInput" maxlength="16" minlength="2" required enterkeyhint="send" spellcheck="false" autocomplete="off">
       <p id="nameErr"></p>
       <div class="btns">
         <button type="button" id="nameCancel">Cancelar</button>
-        <button type="submit">Enviar</button>
+        <button type="submit" id="nameOk">Enviar</button>
       </div>
     </form>
   </div>
@@ -54,6 +54,8 @@
   <script src="js/game.js"></script>
   <script src="js/sfx.js"></script>
   <script src="js/ranking.js"></script>
+  <script src="js/net.js"></script>
+  <script src="js/mp.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/main.js"></script>
 </body>

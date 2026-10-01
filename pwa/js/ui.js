@@ -7,7 +7,7 @@ const TIER_COLOR = ['#D7D7D7', '#4AA3FF', '#B76BFF', '#FF5A4A'];
 const TIER_BG = ['#3A3A3A', '#1C3552', '#3A2358', '#55221C'];
 const C = {
   BG: '#1B2414', PANEL: 'rgba(42,33,22,0.92)', PANEL_BORDER: '#7A5A30', GREEN: '#4CAF50',
-  ORANGE: '#F08A24', GRAY: '#5A5A5A', RED: '#D9443A', SEED: '#8EE05A', GOLD: '#FFD84A',
+  ORANGE: '#F08A24', GRAY: '#5A5A5A', RED: '#D9443A', SEED: '#8EE05A', GOLD: '#FFD84A', BLUE: '#2E7D9A',
 };
 const FONT = '"Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji"';
 const EMOJI_FONT = '"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif';
@@ -95,6 +95,66 @@ class Ui {
     // Ranking online
     this.rank = { diff: this.difficulty, loading: false, error: '', entries: null, myId: null };
     this.submitState = ''; // '', 'sending' ou 'sent'
+    this.mp = null;        // multiplayer (criado no main.js)
+    this.mpMenu = false;   // menu aberto durante uma partida multiplayer (o jogo não pausa)
+    this.cam = { x: 0, y: 0 };
+  }
+
+  /** Pausa (solo) ou menu aberto (multiplayer): o joystick não funciona. */
+  menuOpen() { return this.game.paused || this.mpMenu; }
+
+  /** Pede o nome do multiplayer (se ainda não tiver) e depois chama next(nome). */
+  withMpName(force, next) {
+    const d = this.prefs.data;
+    if (!force && d.playerName && Ranking.validName(d.playerName)) { next(d.playerName); return; }
+    askText({
+      title: '👥 Seu nome no multiplayer', label: 'Como os amigos vão te ver (2 a 16 letras):', submit: 'OK',
+      initial: d.playerName || '', maxLength: 16,
+      clean: (v) => v.replace(/\s+/g, ' ').trim(),
+      check: (v) => (Ranking.validName(v) ? '' : 'Use de 2 a 16 letras ou números (sem < > & { } " \\).'),
+    }, (name) => { d.playerName = name; this.prefs.save(); next(name); });
+  }
+
+  /** Personagem para o multiplayer: o último escolhido, se estiver liberado. */
+  mpChar() {
+    const c = this.selectedChar;
+    return c >= 0 && this.unlockedChars()[c] ? c : 0;
+  }
+
+  mpCreate() {
+    if (this.mp.busy) return;
+    this.withMpName(false, (name) => {
+      this.mp.create(name, this.mpChar(), this.difficulty).catch((e) => this.showToast(e.message, 3));
+    });
+  }
+
+  /** Entrar numa sala: pergunta o código (se não veio no link) e o nome. */
+  mpJoin(code) {
+    if (this.mp.busy) return;
+    const go = (c) => this.withMpName(false, (name) => {
+      this.game.state = 'MP_MENU';
+      this.mp.join(c, name, this.mpChar()).catch((e) => this.showToast(e.message, 4));
+    });
+    if (code) { go(code); return; }
+    askText({
+      title: '🔑 Entrar numa sala', label: 'Código da sala (4 letras ou números):', submit: 'Entrar',
+      initial: '', maxLength: 4, upper: true,
+      clean: (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, ''),
+      check: (v) => (validCode(v) ? '' : 'O código tem 4 letras ou números (ex.: K7QX).'),
+    }, go);
+  }
+
+  /** Compartilha o link da sala (celular) ou copia (computador). */
+  invite() {
+    const url = this.mp.inviteLink();
+    const text = 'Bora jogar Horta Hostil comigo! Sala ' + this.mp.code;
+    if (navigator.share && this.touch) {
+      navigator.share({ title: 'Horta Hostil', text, url }).catch(() => {});
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => this.showToast('Link copiado! Mande pros amigos.'), () => this.showToast('Código da sala: ' + this.mp.code));
+    } else {
+      this.showToast('Código da sala: ' + this.mp.code);
+    }
   }
 
   loadRanking(diff) {
@@ -199,7 +259,7 @@ class Ui {
     const b = this.hit(x, y);
     this.down.set(id, b ? { action: b.action, arg: b.arg } : null);
     const g = this.game;
-    if (!b && g.state === 'PLAYING' && !g.paused && !this.joy) this.joy = { id, ox: x, oy: y, x, y };
+    if (!b && g.state === 'PLAYING' && !this.menuOpen() && !this.joy) this.joy = { id, ox: x, oy: y, x, y };
   }
 
   onMove(id, x, y) {
@@ -240,6 +300,20 @@ class Ui {
         else if (code === 'KeyH') this.doAction('HELP');
         else if (code === 'KeyM') this.doAction('MUSIC');
         else if (code === 'KeyR') this.doAction('RANKING');
+        else if (code === 'KeyO') this.doAction('MP');
+        break;
+      case 'MP_MENU':
+        if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
+        else if (code === 'KeyC') this.doAction('MP_CREATE');
+        else if (ok || code === 'KeyE') this.doAction('MP_JOIN');
+        break;
+      case 'LOBBY':
+        if (code === 'Escape') this.doAction('LOBBY_LEAVE');
+        else if (code === 'ArrowLeft' || code === 'KeyA') this.doAction('LOBBY_STEP', -1);
+        else if (code === 'ArrowRight' || code === 'KeyD') this.doAction('LOBBY_STEP', 1);
+        else if (code === 'KeyQ') this.doAction('LOBBY_DIFF', -1);
+        else if (code === 'KeyE') this.doAction('LOBBY_DIFF', 1);
+        else if (ok) this.doAction(this.mp.isHost() ? 'LOBBY_START' : 'LOBBY_READY');
         break;
       case 'RANKING':
         if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
@@ -257,8 +331,8 @@ class Ui {
         else if (code === 'Escape') this.doAction('MENU');
         break;
       case 'PLAYING':
-        if (code === 'Escape' || code === 'KeyP') { g.paused = !g.paused; this.joy = null; }
-        else if (g.paused && code === 'KeyQ') this.doAction('QUIT');
+        if (code === 'Escape' || code === 'KeyP') this.doAction(this.menuOpen() ? 'RESUME' : 'PAUSE');
+        else if (this.menuOpen() && code === 'KeyQ') this.doAction('QUIT');
         break;
       case 'LEVEL_UP':
         if (num !== undefined) this.doAction('LEVEL', num);
@@ -269,13 +343,17 @@ class Ui {
         else if (code === 'KeyR' || num === 1) this.doAction('CRATE_RECYCLE');
         break;
       case 'SHOP':
-        if (num !== undefined) this.doAction('BUY', num);
+        if (g.coop && this.mp.ready) { if (ok || code === 'Escape') this.doAction('UNREADY'); }
+        else if (num !== undefined) this.doAction('BUY', num);
         else if (code === 'KeyR') this.doAction('REROLL');
         else if (ok) this.doAction('NEXT');
         break;
       case 'GAME_OVER':
       case 'VICTORY':
-        if (ok) this.doAction('AGAIN');
+        if (g.coop) {
+          if (ok) this.doAction('MP_BACK_LOBBY');
+          else if (code === 'Escape') this.doAction('QUIT');
+        } else if (ok) this.doAction('AGAIN');
         else if (code === 'Escape') this.doAction('MENU');
         else if (code === 'KeyE') this.doAction('SUBMIT');
         break;
@@ -304,6 +382,29 @@ class Ui {
         if (this.touch) enterMobileFullscreen();
         break;
       case 'APK': location.href = 'HortaHostil.apk'; break;
+      case 'MP': this.newUnlocks = ''; g.state = 'MP_MENU'; if (this.touch) enterMobileFullscreen(); break;
+      case 'MP_CREATE': this.mpCreate(); break;
+      case 'MP_JOIN': this.mpJoin(null); break;
+      case 'MP_NAME': this.withMpName(true, () => {}); break;
+      case 'INVITE': this.invite(); break;
+      case 'LOBBY_CHAR':
+        if (this.unlockedChars()[arg]) { this.selectedChar = arg; this.prefs.data.lastChar = arg; this.prefs.save(); this.mp.setChar(arg); }
+        else this.showToast('Personagem bloqueado: ' + unlockText(CHARS[arg]));
+        break;
+      case 'LOBBY_STEP': {
+        const open = this.unlockedChars().map((u, i) => (u ? i : -1)).filter((i) => i >= 0);
+        const k = open.indexOf(this.mp.myChar);
+        this.doAction('LOBBY_CHAR', open[(k + arg + open.length) % open.length]);
+        break;
+      }
+      case 'LOBBY_READY': this.mp.setLobbyReady(!this.mp.myReady); break;
+      case 'LOBBY_DIFF':
+        if (this.mp.isHost()) { this.difficulty = (this.mp.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length; this.mp.setDiff(this.difficulty); }
+        break;
+      case 'LOBBY_START': if (!this.mp.startGame()) this.showToast(this.mp.lobbyHint()); break;
+      case 'LOBBY_LEAVE': this.mp.leave(); g.state = 'MP_MENU'; break;
+      case 'MP_BACK_LOBBY': this.newUnlocks = ''; this.mp.backToLobby(); break;
+      case 'UNREADY': this.mp.setReady(false); break;
       case 'RANKING': g.state = 'RANKING'; this.loadRanking(this.difficulty); break;
       case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length); break;
       case 'RANK_TAB': this.loadRanking(arg); break;
@@ -344,9 +445,13 @@ class Ui {
         this.joy = null;
         break;
       case 'MENU': g.state = 'MENU'; g.paused = false; break;
-      case 'PAUSE': g.paused = true; this.joy = null; break;
-      case 'RESUME': g.paused = false; break;
-      case 'QUIT': g.paused = false; g.state = 'GAME_OVER'; g.fx.runEnded(false, g.wave); break;
+      case 'PAUSE': if (g.coop) this.mpMenu = true; else g.paused = true; this.joy = null; break;
+      case 'RESUME': g.paused = false; this.mpMenu = false; break;
+      case 'QUIT':
+        this.mpMenu = false;
+        if (g.coop || this.mp.active) { this.mp.leave(); g.state = 'MENU'; break; }
+        g.paused = false; g.state = 'GAME_OVER'; g.fx.runEnded(false, g.wave);
+        break;
       case 'LEVEL': g.chooseLevel(arg); break;
       case 'LEVEL_REROLL': if (!g.rerollLevel()) this.showToast('Sementes insuficientes!'); break;
       case 'CRATE_TAKE': g.resolveCrate(true); break;
@@ -359,7 +464,10 @@ class Ui {
       }
       case 'LOCK': g.toggleLock(arg); break;
       case 'REROLL': if (!g.rerollShop()) this.showToast('Sementes insuficientes!'); break;
-      case 'NEXT': this.popupWeapon = -1; this.tipItem = null; g.nextWave(); this.joy = null; break;
+      case 'NEXT':
+        this.popupWeapon = -1; this.tipItem = null; this.joy = null;
+        if (g.coop) this.mp.setReady(true); else g.nextWave();
+        break;
       case 'WEAPON': this.popupWeapon = arg; break;
       case 'SELL':
         if (g.sellWeapon(this.popupWeapon)) this.popupWeapon = -1;
@@ -371,7 +479,7 @@ class Ui {
       case 'CLOSE': this.popupWeapon = -1; break;
     }
     // Na loja, qualquer mudança já fica salva (pra continuar depois).
-    if (g.state === 'SHOP') this.prefs.saveRun(g.saveToString());
+    if (g.state === 'SHOP' && !g.coop) this.prefs.saveRun(g.saveToString());
   }
 
   disabledTap(action, arg) {
@@ -384,7 +492,7 @@ class Ui {
     else if (action === 'COMBINE') this.showToast('Precisa de outra arma igual (mesmo nível).');
   }
 
-  showToast(s) { this.toast = s; this.toastTime = 2; }
+  showToast(s, secs) { this.toast = s; this.toastTime = secs || 2; }
 
   // ------------------------------------------------------------------
   // Desenho
@@ -399,7 +507,8 @@ class Ui {
     this.deferred = null;
     if (this.tipTime > 0) this.tipTime -= dt;
     if (this.game.state !== this.lastState) {
-      if (this.game.state === 'SHOP') this.prefs.saveRun(this.game.saveToString());
+      if (this.game.state === 'SHOP' && !this.game.coop) this.prefs.saveRun(this.game.saveToString());
+      if (this.game.state !== 'PLAYING') this.mpMenu = false;
       if (this.game.state === 'GAME_OVER' || this.game.state === 'VICTORY') this.submitState = '';
       this.lastState = this.game.state;
     }
@@ -419,8 +528,10 @@ class Ui {
       case 'CHAR_SELECT': this.drawCharSelect(); break;
       case 'PLAYING':
         this.drawWorld();
-        if (g.paused) this.drawPause(); else this.drawHud();
+        if (this.menuOpen()) this.drawPause(); else this.drawHud();
         break;
+      case 'MP_MENU': this.drawMpMenu(); break;
+      case 'LOBBY': this.drawLobby(); break;
       case 'LEVEL_UP': this.drawLevelUp(); break;
       case 'CRATE': this.drawCrate(); break;
       case 'RANKING': this.drawRanking(); break;
@@ -451,14 +562,16 @@ class Ui {
     });
     this.text('HORTA HOSTIL', cx, 250, 92, C.GOLD, 'center');
     this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 298, 26, '#E8F5D0', 'center');
+    const big = d.savedRun
+      ? [['CONTINUAR', 'CONTINUE', C.GREEN], ['NOVO JOGO', 'PLAY', C.ORANGE], ['👥 MULTIPLAYER', 'MP', C.BLUE]]
+      : [['JOGAR', 'PLAY', C.GREEN], ['👥 MULTIPLAYER', 'MP', C.BLUE]];
+    const bg = 20, bbw = Math.min(340, (this.vw - 80 - bg * (big.length - 1)) / big.length);
+    const bbx = cx - (bbw * big.length + bg * (big.length - 1)) / 2;
+    big.forEach(([label, action, color], i) => this.button(bbx + i * (bbw + bg), 335, bbw, 90, label, action, 0, color, true, 40));
     if (d.savedRun) {
       let wave = '?';
       try { wave = JSON.parse(d.savedRun).wave; } catch (e) { /* ignora */ }
-      this.button(cx - 350, 335, 340, 90, 'CONTINUAR', 'CONTINUE', 0, C.GREEN, true, 40);
-      this.text('depois da onda ' + wave, cx - 180, 446, 20, '#CFE3B8', 'center');
-      this.button(cx + 10, 335, 340, 90, 'NOVO JOGO', 'PLAY', 0, C.ORANGE, true, 40);
-    } else {
-      this.button(cx - 170, 335, 340, 90, 'JOGAR', 'PLAY', 0, C.GREEN, true, 44);
+      this.text('depois da onda ' + wave, bbx + bbw / 2, 446, 20, '#CFE3B8', 'center');
     }
     const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
     const showApk = IS_ANDROID && !IS_STANDALONE;
@@ -475,8 +588,8 @@ class Ui {
     this.text('Melhor onda: ' + d.bestWave + '   •   Vitórias: ' + d.wins + '   •   Insetos derrotados: ' + d.totalKills, cx, 580, 24, '#CFE3B8', 'center');
     const unlocked = this.unlockedChars().filter((u) => u).length;
     this.text('Personagens liberados: ' + unlocked + '/' + CHARS.length, cx, 618, 22, '#B8CFA0', 'center');
-    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  R: ranking  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v2.2', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  O: multiplayer  •  R: ranking  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
+    this.text('Projeto escolar • feito com JavaScript puro • v2.3', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -514,6 +627,104 @@ class Ui {
     ];
     lines.forEach((l, i) => this.text(l, x + 40, y + 120 + i * 44, 24, '#FFFFFF', 'left'));
     this.button(this.vw / 2 - 110, y + h - 74, 220, 56, 'Entendi!', 'HELP', 0, C.GREEN, true, 26);
+  }
+
+  // --- Multiplayer: menu ---
+
+  drawMpMenu() {
+    const cx = this.vw / 2, mp = this.mp, d = this.prefs.data;
+    this.drawMenuBackground();
+    this.text('👥 MULTIPLAYER', cx, 92, 62, C.GOLD, 'center');
+    this.text('Joguem juntos na mesma horta: de 2 a 4 jogadores, cada um no seu celular ou computador.', cx, 140, 23, '#E8F5D0', 'center');
+    const lines = [
+      '1. Um de vocês toca em Criar sala e passa o código pros amigos.',
+      '2. Os amigos tocam em Entrar numa sala e digitam o código.',
+      '3. Cada um escolhe o legume, e o dono da sala começa a partida!',
+    ];
+    const w = Math.min(860, this.vw - 60);
+    this.roundRect(cx - w / 2, 168, w, 150, 16, 'rgba(0,0,0,0.35)');
+    lines.forEach((l, i) => this.textFit(l, cx, 208 + i * 40, 22, w - 30, '#FFFFFF'));
+    const busy = !!mp.busy;
+    const bw = Math.min(330, (this.vw - 100) / 2);
+    this.button(cx - bw - 15, 345, bw, 96, 'Criar sala', 'MP_CREATE', 0, C.GREEN, !busy, 38);
+    this.button(cx + 15, 345, bw, 96, 'Entrar numa sala', 'MP_JOIN', 0, C.BLUE, !busy, 34);
+    if (busy) this.text(mp.busy, cx, 485, 26, C.GOLD, 'center');
+    else this.text('Seu nome: ' + (d.playerName || '(ainda não escolhido)'), cx, 485, 24, '#CFE3B8', 'center');
+    this.button(cx - 120, 505, 240, 54, 'Trocar nome', 'MP_NAME', 0, C.GRAY, !busy, 22);
+    this.textFit('No multiplayer as sementes são do time, quem cai volta na onda seguinte e os insetos ficam mais fortes.', cx, 600, 19, this.vw - 60, '#B8CFA0');
+    this.text('Precisa de internet. A partida não fica salva.', cx, 628, 19, '#B8CFA0', 'center');
+    this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, !busy, 30);
+    if (!this.touch) this.text('C: criar sala  •  Enter: entrar numa sala  •  Esc: voltar', cx, VH - 26, 16, 'rgba(255,255,255,0.45)', 'center');
+  }
+
+  // --- Multiplayer: sala de espera ---
+
+  drawLobby() {
+    const vw = this.vw, cx = vw / 2, mp = this.mp, host = mp.isHost();
+    this.text('SALA', 30, 66, 34, '#E8F5D0', 'left');
+    const tw = this.measure('SALA ', 34);
+    this.text(mp.code, 30 + tw, 70, 54, C.GOLD, 'left');
+    const hx = 30 + tw + this.measure(mp.code, 54) + 24, hw = vw - 270 - hx;
+    let hs = 20;
+    const hint = 'Passe o código pros amigos (até ' + MP_MAX + ' jogadores)';
+    while (hs > 12 && this.measure(hint, hs) > hw) hs--;
+    if (hw > 80) this.text(hint, hx, 62, hs, '#CFE3B8', 'left');
+    this.button(vw - 250, 18, 220, 62, '🔗 Convidar', 'INVITE', 0, C.BLUE, true, 26);
+    // jogadores
+    const gap = 14, cw = (vw - 60 - gap * 3) / 4, ch = 196, y0 = 98;
+    for (let i = 0; i < MP_MAX; i++) {
+      const x = 30 + i * (cw + gap), r = mp.roster[i];
+      if (!r) {
+        this.roundRect(x, y0, cw, ch, 18, 'rgba(0,0,0,0.22)', 'rgba(255,255,255,0.15)', 2);
+        this.text('vaga livre', x + cw / 2, y0 + ch / 2 + 8, 22, 'rgba(255,255,255,0.35)', 'center');
+        continue;
+      }
+      const mine = r.id === mp.pid;
+      this.roundRect(x, y0, cw, ch, 18, mine ? '#33442A' : '#2A2116', SLOT_COLORS[i], mine ? 5 : 3);
+      this.emoji(CHARS[r.char].icon, x + cw / 2, y0 + 50, 70);
+      this.drawEyes(x + cw / 2, y0 + 48, 0.8, 0, 0);
+      this.textFit(r.name + (mine ? ' (você)' : ''), x + cw / 2, y0 + 112, 22, cw - 16, '#FFFFFF');
+      this.textFit(CHARS[r.char].name, x + cw / 2, y0 + 138, 17, cw - 16, '#FFE08A');
+      const st = r.host ? '👑 Dono da sala' : r.ready ? '✔ Pronto' : '⏳ Escolhendo...';
+      this.textFit(st, x + cw / 2, y0 + 166, 19, cw - 16, r.host ? C.GOLD : r.ready ? '#8CF08C' : '#FFC870');
+      if (!r.host) this.textFit(mp.connText(r.conn), x + cw / 2, y0 + 188, 14, cw - 16, 'rgba(255,255,255,0.55)');
+    }
+    // escolha do legume
+    const unlocked = this.unlockedChars();
+    this.text('Seu legume:', 30, 334, 24, '#FFFFFF', 'left');
+    const n = CHARS.length, s = Math.min(86, (vw - 60 - (n - 1) * 8) / n), rowX = cx - (s * n + 8 * (n - 1)) / 2;
+    for (let i = 0; i < n; i++) {
+      const x = rowX + i * (s + 8), y = 348, sel = mp.myChar === i;
+      this.roundRect(x, y, s, s, 14, sel ? '#3F5A26' : unlocked[i] ? '#2A2116' : '#1E1A14', sel ? C.GOLD : unlocked[i] ? C.PANEL_BORDER : '#4A4038', sel ? 4 : 2);
+      this.register(x, y, s, s, 'LOBBY_CHAR', i, true);
+      this.ctx.globalAlpha = unlocked[i] ? 1 : 0.3;
+      this.emoji(CHARS[i].icon, x + s / 2, y + s / 2, s * 0.7);
+      this.ctx.globalAlpha = 1;
+      if (!unlocked[i]) this.emoji('🔒', x + s - 16, y + s - 16, 24);
+    }
+    const cd = CHARS[mp.myChar];
+    let info = cd.name + ' • Arma: ' + cd.startWeapon.name;
+    for (let m = 0; m < cd.mods.length; m += 2) info += ' • ' + Stat.format(cd.mods[m], cd.mods[m + 1]);
+    this.textFit(info, cx, 470, 20, vw - 60, '#E8F5D0');
+    // dificuldade
+    const diffColor = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A'];
+    const dtx = DIFF_ICONS[mp.diff] + ' ' + DIFF_NAMES[mp.diff];
+    if (host) {
+      this.button(cx - 260, 492, 56, 64, '◀', 'LOBBY_DIFF', -1, C.GRAY, true, 28);
+      this.button(cx + 204, 492, 56, 64, '▶', 'LOBBY_DIFF', 1, C.GRAY, true, 28);
+    }
+    this.roundRect(cx - 196, 490, 392, 70, 16, 'rgba(0,0,0,0.4)');
+    this.textFit('Dificuldade: ' + dtx, cx, 522, 26, 380, diffColor[mp.diff]);
+    this.textFit(DIFF_DESC[mp.diff], cx, 548, 16, 380, '#CFE3B8');
+    // rodapé
+    const by = VH - 104;
+    this.button(30, by + 8, 180, 76, 'Sair', 'LOBBY_LEAVE', 0, C.GRAY, true, 30);
+    const bw = vw < 1200 ? 250 : 300;
+    if (host) this.button(vw - 30 - bw, by + 4, bw, 84, 'COMEÇAR!', 'LOBBY_START', 0, C.GREEN, mp.canStart(), 36);
+    else this.button(vw - 30 - bw, by + 4, bw, 84, mp.myReady ? 'Cancelar pronto' : 'PRONTO!', 'LOBBY_READY', 0, mp.myReady ? C.ORANGE : C.GREEN, true, mp.myReady ? 28 : 36);
+    const hintW = vw - 60 - 180 - bw - 40;
+    this.textFit(mp.lobbyHint(), 30 + 180 + 20 + hintW / 2, by + 44, 22, hintW, '#FFE678');
+    if (!this.touch) this.textFit('Setas: legume  •  ' + (host ? 'Q/E: dificuldade  •  Enter: começar' : 'Enter: pronto') + '  •  Esc: sair', 30 + 180 + 20 + hintW / 2, by + 76, 16, hintW, 'rgba(255,255,255,0.45)');
   }
 
   // --- Personagens ---
@@ -698,10 +909,17 @@ class Ui {
 
   drawWorld() {
     if (!this.arena) this.buildArena();
-    const ctx = this.ctx, g = this.game, p = g.player, vw = this.vw;
+    const ctx = this.ctx, g = this.game, me = g.player, vw = this.vw;
+    // câmera: segue você (ou, se você caiu, o amigo vivo mais perto)
+    const focus = me.alive ? me : (g.nearestPlayer(me.x, me.y) || me);
     const margin = 70;
-    let camX = WORLD_W + margin * 2 <= vw ? (WORLD_W - vw) / 2 : clamp(p.x - vw / 2, -margin, WORLD_W - vw + margin);
-    let camY = clamp(p.y - VH / 2, -margin, WORLD_H - VH + margin);
+    let camX = WORLD_W + margin * 2 <= vw ? (WORLD_W - vw) / 2 : clamp(focus.x - vw / 2, -margin, WORLD_W - vw + margin);
+    let camY = clamp(focus.y - VH / 2, -margin, WORLD_H - VH + margin);
+    if (focus !== me) {
+      const c = this.cam, k = 0.12;
+      camX = c.x + (camX - c.x) * k; camY = c.y + (camY - c.y) * k;
+    }
+    this.cam.x = camX; this.cam.y = camY;
     if (g.shake > 0 && !g.paused) {
       camX += (Math.random() - 0.5) * g.shake;
       camY += (Math.random() - 0.5) * g.shake;
@@ -756,11 +974,32 @@ class Ui {
       ctx.ellipse(e.x, e.y + e.radius * 0.78, e.radius * 0.9, e.radius * 0.23, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.beginPath(); ctx.ellipse(p.x, p.y + 23, 24, 7, 0, 0, Math.PI * 2); ctx.fill();
+    for (const p of g.players) {
+      if (!p.alive) continue;
+      if (g.coop) { // anel colorido: cada jogador tem uma cor
+        ctx.strokeStyle = SLOT_COLORS[p.slot % SLOT_COLORS.length]; ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.ellipse(p.x, p.y + 23, 30, 10, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + 23, 24, 7, 0, 0, Math.PI * 2); ctx.fill();
+    }
 
     for (const e of g.enemies) if (!e.dead) this.drawEnemy(e);
-    this.drawPlayer(p);
-    for (const w of p.weapons) this.drawWeapon(w);
+    for (const p of g.players) {
+      if (!p.alive) { this.drawGhost(p); continue; }
+      this.drawPlayer(p);
+      for (const w of p.weapons) this.drawWeapon(w);
+    }
+    if (g.coop) {
+      for (const p of g.players) {
+        if (p === me) continue;
+        this.text(p.name, p.x, p.y - 46, 18, SLOT_COLORS[p.slot % SLOT_COLORS.length], 'center');
+        if (p.alive && p.hp < p.maxHp()) {
+          ctx.fillStyle = 'rgba(0,0,0,0.67)'; ctx.fillRect(p.x - 25, p.y - 40, 50, 6);
+          ctx.fillStyle = '#E0413A'; ctx.fillRect(p.x - 24, p.y - 39, 48 * clamp(p.hp / p.maxHp(), 0, 1), 4);
+        }
+      }
+    }
 
     // projéteis
     for (const b of g.bullets) {
@@ -851,6 +1090,40 @@ class Ui {
     ctx.restore();
   }
 
+  /** Jogador que caiu (multiplayer): fantasminha transparente até a próxima onda. */
+  drawGhost(p) {
+    const ctx = this.ctx;
+    ctx.globalAlpha = 0.35;
+    this.emoji(p.character.icon, p.x, p.y + Math.sin(this.time * 3 + p.slot) * 4, 60);
+    ctx.globalAlpha = 0.85;
+    this.emoji('👻', p.x + 22, p.y - 26 + Math.sin(this.time * 4) * 3, 30);
+    ctx.globalAlpha = 1;
+  }
+
+  /** Setinhas na borda da tela apontando para os amigos que estão fora de vista. */
+  drawTeamArrows() {
+    const g = this.game, vw = this.vw;
+    for (const p of g.players) {
+      if (p === g.player) continue;
+      const sx = p.x - this.cam.x, sy = p.y - this.cam.y;
+      if (sx > -10 && sx < vw + 10 && sy > -10 && sy < VH + 10) continue;
+      const x = clamp(sx, 40, vw - 40), y = clamp(sy, 120, VH - 40);
+      const a = Math.atan2(sy - y, sx - x), color = SLOT_COLORS[p.slot % SLOT_COLORS.length];
+      const ctx = this.ctx;
+      this.circle(x, y, 26, 'rgba(0,0,0,0.55)');
+      ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+      ctx.globalAlpha = p.alive ? 1 : 0.5;
+      this.emoji(p.alive ? p.character.icon : '👻', x, y, 34);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(a) * 40, y + Math.sin(a) * 40);
+      ctx.lineTo(x + Math.cos(a + 0.4) * 29, y + Math.sin(a + 0.4) * 29);
+      ctx.lineTo(x + Math.cos(a - 0.4) * 29, y + Math.sin(a - 0.4) * 29);
+      ctx.fill();
+    }
+  }
+
   /** Olhinhos esbugalhados (tipo Brotato!). */
   drawEyes(x, y, s, lx, ly) {
     const r = 8 * s, ex = 10 * s;
@@ -930,9 +1203,10 @@ class Ui {
 
   drawHud() {
     const g = this.game, p = g.player, vw = this.vw;
+    if (g.coop) this.drawTeamArrows();
     // aviso de vida baixa: bordas vermelhas pulsando
     const frac = p.hp / p.maxHp();
-    if (frac < 0.3 && !g.ending) {
+    if (frac < 0.3 && !g.ending && p.alive) {
       const pulse = 0.55 + 0.45 * Math.sin(this.time * 7);
       const a = 0.6 * pulse * (1 - frac / 0.3 * 0.5);
       const grad = this.ctx.createRadialGradient(vw / 2, VH / 2, vw * 0.25, vw / 2, VH / 2, vw * 0.62);
@@ -951,6 +1225,7 @@ class Ui {
       this.emoji('📦', 34, 148, 30);
       this.text('x' + p.crates, 56, 158, 26, C.GOLD, 'left');
     }
+    if (g.coop) this.drawTeamList(18, p.crates > 0 ? 190 : 150);
 
     this.text('ONDA ' + g.wave + (g.difficulty !== 1 ? '  •  ' + DIFF_NAMES[g.difficulty] : ''), vw / 2, 40, 28, '#FFFFFF', 'center');
     const left = g.ending ? 0 : Math.ceil(Math.max(0, g.waveDuration - g.waveTime));
@@ -973,6 +1248,15 @@ class Ui {
       this.ctx.globalAlpha = 1;
     }
 
+    if (g.coop && !p.alive && !g.ending) {
+      this.text('Você caiu! 👻', vw / 2, VH * 0.62, 46, '#FF8A7A', 'center');
+      this.text('Você volta na próxima onda. Torça pelos amigos!', vw / 2, VH * 0.62 + 40, 24, '#FFFFFF', 'center');
+    }
+    if (this.mp.hostStalled()) {
+      this.roundRect(vw / 2 - 330, VH * 0.45 - 40, 660, 60, 16, 'rgba(0,0,0,0.7)');
+      this.text('Esperando o dono da sala... (ele minimizou o jogo?)', vw / 2, VH * 0.45, 24, C.GOLD, 'center');
+    }
+
     const j = this.joy;
     if (j) {
       const R = 75;
@@ -985,16 +1269,33 @@ class Ui {
     }
   }
 
+  /** Time no canto da tela: ícone, nome e vida de cada amigo. */
+  drawTeamList(x, y) {
+    const g = this.game;
+    for (const p of g.players) {
+      if (p === g.player) continue;
+      const color = SLOT_COLORS[p.slot % SLOT_COLORS.length];
+      this.ctx.globalAlpha = p.alive ? 1 : 0.5;
+      this.emoji(p.alive ? p.character.icon : '👻', x + 16, y + 14, 30);
+      this.ctx.globalAlpha = 1;
+      this.text(p.name, x + 38, y + 12, 17, color, 'left');
+      if (p.alive) this.bar(x + 40, y + 19, 110, 8, p.hp / p.maxHp(), '#E0413A', '#3A1210');
+      else this.text('caiu', x + 40, y + 31, 15, '#FF8A7A', 'left');
+      y += 42;
+    }
+  }
+
   drawPause() {
-    const ctx = this.ctx, vw = this.vw;
+    const ctx = this.ctx, vw = this.vw, coop = this.game.coop;
     ctx.fillStyle = 'rgba(0,0,0,0.69)';
     ctx.fillRect(0, 0, vw, VH);
     this.register(0, 0, vw, VH, 'NONE', -1, false);
     const statsW = vw < 1200 ? 250 : 300;
     const cx = (vw - statsW) / 2;
-    this.text('PAUSADO', cx, 120, 64, C.GOLD, 'center');
+    this.text(coop ? 'MENU' : 'PAUSADO', cx, 110, 64, C.GOLD, 'center');
+    if (coop) this.text('A partida continua rolando!', cx, 150, 22, '#FF8A7A', 'center');
     this.button(cx - 170, 180, 340, 84, this.touch ? 'Continuar' : 'Continuar (Esc)', 'RESUME', 0, C.GREEN, true, 34);
-    this.button(cx - 170, 285, 340, 70, 'Desistir', 'QUIT', 0, C.RED, true, 30);
+    this.button(cx - 170, 285, 340, 70, coop ? 'Sair da sala' : 'Desistir', 'QUIT', 0, C.RED, true, 30);
     this.drawWeaponRow(40, 420, cx * 2 - 80, false);
     this.drawItemsGrid(40, 590, cx * 2 - 80, 110);
     this.drawStatsPanel(vw - statsW - 16, 16, statsW, VH - 32);
@@ -1037,7 +1338,8 @@ class Ui {
     const areaW = vw - statsW - 48;
     this.text('LOJA', 24, 58, 46, C.GOLD, 'left');
     let sub = 'Onda ' + g.wave + ' concluída!';
-    if (g.lastHarvest > 0 && !narrow) sub += '  Colheita: +' + g.lastHarvest;
+    if (g.coop) sub += '  Prontos: ' + (g.players.length - this.mp.waitingFor().length) + '/' + g.players.length;
+    else if (g.lastHarvest > 0 && !narrow) sub += '  Colheita: +' + g.lastHarvest;
     this.text(sub, 150, 56, 24, '#E8F5D0', 'left');
     this.seedCounter(24 + areaW - 140, 30, p.materials);
 
@@ -1086,9 +1388,23 @@ class Ui {
     this.drawStatsPanel(sx, 16, statsW, VH - 32 - 170);
     const cost = g.shopRerollCost();
     this.buttonSeed(sx, VH - 172, statsW, 66, cost, 'REROLL', 0, C.ORANGE, p.materials >= cost, this.touch ? 'Rolar ' : 'Rolar (R) ');
-    this.button(sx, VH - 96, statsW, 80, 'Próxima onda ▶', 'NEXT', 0, C.GREEN, true, 30);
+    this.button(sx, VH - 96, statsW, 80, g.coop ? 'Pronto ✔' : 'Próxima onda ▶', 'NEXT', 0, C.GREEN, true, 30);
 
     if (this.popupWeapon >= 0 && this.popupWeapon < p.weapons.length) this.drawWeaponPopup();
+    if (g.coop && this.mp.ready) this.drawWaiting();
+  }
+
+  /** Multiplayer: esperando os outros terminarem a loja. */
+  drawWaiting() {
+    this.backdrop('NONE');
+    const w = Math.min(640, this.vw - 60), h = 300, x = this.vw / 2 - w / 2, y = VH / 2 - h / 2;
+    this.panel(x, y, w, h);
+    this.text('Pronto! ✔', this.vw / 2, y + 62, 46, '#8CF08C', 'center');
+    const names = this.mp.waitingFor().filter((n) => n !== 'você');
+    const dots = '.'.repeat(1 + Math.floor(this.time * 2) % 3);
+    this.textFit(names.length ? 'Esperando: ' + names.join(', ') + dots : 'Começando a próxima onda' + dots, this.vw / 2, y + 120, 26, w - 40, '#FFFFFF');
+    this.text('A próxima onda começa quando todos ficarem prontos.', this.vw / 2, y + 160, 20, '#CFE3B8', 'center');
+    this.button(this.vw / 2 - 150, y + h - 100, 300, 72, 'Voltar pra loja', 'UNREADY', 0, C.ORANGE, true, 28);
   }
 
   weaponStats(w, x, y, maxW, full) {
@@ -1216,10 +1532,10 @@ class Ui {
     this.drawMenuBackground();
     if (won) {
       this.text('A HORTA ESTÁ SALVA!', cx, 100, 68, C.GOLD, 'center');
-      this.text('Você sobreviveu às 20 ondas no ' + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
+      this.text((g.coop ? 'O time sobreviveu' : 'Você sobreviveu') + ' às 20 ondas no ' + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
     } else {
       this.text('VIROU SALADA!', cx, 100, 72, '#FF6A5A', 'center');
-      this.text('Os insetos venceram desta vez...', cx, 145, 26, '#E8F5D0', 'center');
+      this.text(g.coop ? 'O time inteiro caiu... os insetos venceram desta vez.' : 'Os insetos venceram desta vez...', cx, 145, 26, '#E8F5D0', 'center');
     }
     if (p) {
       const lx = cx - 250;
@@ -1243,6 +1559,19 @@ class Ui {
       this.ctx.globalAlpha = 0.75 + 0.25 * Math.sin(this.time * 5);
       this.text('🔓 Novo personagem liberado: ' + this.newUnlocks + '!', cx, VH - 150, 28, C.GOLD, 'center');
       this.ctx.globalAlpha = 1;
+    }
+    if (g.coop) {
+      // o time
+      let tx = cx - (g.players.length * 150) / 2 + 75;
+      for (const q of g.players) {
+        this.emoji(q.character.icon, tx, VH - 222, 46);
+        this.textFit(q.name, tx, VH - 182, 18, 140, SLOT_COLORS[q.slot % SLOT_COLORS.length]);
+        tx += 150;
+      }
+      const bw2 = Math.min(360, (this.vw - 100) / 2);
+      this.button(cx - bw2 - 10, VH - 120, bw2, 84, this.touch ? 'Voltar pra sala' : 'Voltar pra sala (Enter)', 'MP_BACK_LOBBY', 0, C.GREEN, true, 30);
+      this.button(cx + 10, VH - 120, bw2, 84, 'Sair da sala', 'QUIT', 0, C.GRAY, true, 30);
+      return;
     }
     const bw = Math.min(330, (this.vw - 100) / 3), gap = 20, bx = cx - (bw * 3 + gap * 2) / 2;
     this.button(bx, VH - 120, bw, 84, 'Jogar de novo', 'AGAIN', 0, C.GREEN, true, 32);
@@ -1414,14 +1743,24 @@ function enterMobileFullscreen() {
   } catch (e) { /* ignora */ }
 }
 
-/** Mostra a caixinha HTML para digitar o nome (o canvas não tem campo de texto). */
-function askName(initial, onOk) {
+/**
+ * Caixinha HTML para digitar um texto (o canvas não tem campo de texto).
+ * o = {title, label, submit, initial, maxLength, upper, clean(v), check(v) -> erro ou ''}
+ */
+function askText(o, onOk) {
   const box = document.getElementById('nameBox');
   const form = document.getElementById('nameForm');
   const input = document.getElementById('nameInput');
   const err = document.getElementById('nameErr');
   if (!box) return;
-  input.value = initial;
+  document.getElementById('nameTitle').textContent = o.title;
+  document.getElementById('nameLabel').textContent = o.label;
+  document.getElementById('nameOk').textContent = o.submit;
+  input.maxLength = o.maxLength || 16;
+  input.minLength = o.maxLength === 4 ? 4 : 2;
+  input.setAttribute('autocapitalize', o.upper ? 'characters' : 'words');
+  input.style.textTransform = o.upper ? 'uppercase' : 'none';
+  input.value = o.initial || '';
   err.textContent = '';
   box.hidden = false;
   setTimeout(() => { input.focus(); input.select(); }, 30);
@@ -1429,14 +1768,21 @@ function askName(initial, onOk) {
   document.getElementById('nameCancel').onclick = close;
   form.onsubmit = (ev) => {
     ev.preventDefault();
-    const name = input.value.replace(/\s+/g, ' ').trim();
-    if (!Ranking.validName(name)) {
-      err.textContent = 'Use de 2 a 16 letras ou números (sem < > & { } " \\).';
-      return;
-    }
+    const v = o.clean ? o.clean(input.value) : input.value;
+    const e = o.check ? o.check(v) : '';
+    if (e) { err.textContent = e; return; }
     close();
-    onOk(name);
+    onOk(v);
   };
+}
+
+/** Nome para o ranking. */
+function askName(initial, onOk) {
+  askText({
+    title: '🏆 Enviar pro ranking', label: 'Seu nome (aparece pra todo mundo):', submit: 'Enviar', initial, maxLength: 16,
+    clean: (v) => v.replace(/\s+/g, ' ').trim(),
+    check: (v) => (Ranking.validName(v) ? '' : 'Use de 2 a 16 letras ou números (sem < > & { } " \\).'),
+  }, onOk);
 }
 
 function shortNum(v) {

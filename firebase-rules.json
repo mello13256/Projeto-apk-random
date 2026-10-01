@@ -5,26 +5,148 @@
     "ranking": {
       "$diff": {
         ".read": "$diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3'",
-        ".indexOn": ["score"],
+        ".indexOn": [
+          "score"
+        ],
         "$id": {
           ".write": "($diff === 'd0' || $diff === 'd1' || $diff === 'd2' || $diff === 'd3') && !data.exists() && newData.exists()",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
           },
-          "character": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8" },
-          "wave": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 20" },
+          "character": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 8"
+          },
+          "wave": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 20"
+          },
           "won": {
             ".validate": "newData.isBoolean() && (newData.val() === false || newData.parent().child('wave').val() === 20)"
           },
-          "kills": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000" },
-          "level": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 300" },
-          "platform": { ".validate": "newData.val() === 'web' || newData.val() === 'android'" },
+          "kills": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000"
+          },
+          "level": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 300"
+          },
+          "platform": {
+            ".validate": "newData.val() === 'web' || newData.val() === 'android'"
+          },
           "score": {
             ".validate": "newData.isNumber() && ((newData.parent().child('won').val() === true && newData.val() === 100000000 + newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()) || (newData.parent().child('won').val() === false && newData.val() === newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()))"
           },
-          "createdAt": { ".validate": "newData.isNumber() && newData.val() <= now" },
-          "$other": { ".validate": false }
+          "createdAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
+    "rooms": {
+      ".read": true,
+      "$code": {
+        ".write": "$code.matches(/^[A-Z0-9]{4}$/)",
+        "h": {
+          "meta": {
+            ".validate": "newData.hasChildren(['host', 'st'])",
+            "host": {
+              ".validate": "newData.isString() && newData.val().length <= 20"
+            },
+            "diff": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+            },
+            "st": {
+              ".validate": "newData.val() === 'lobby' || newData.val() === 'game' || newData.val() === 'closed'"
+            },
+            "ts": {
+              ".validate": "newData.isNumber()"
+            },
+            "hb": {
+              ".validate": "newData.isNumber()"
+            },
+            "v": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          },
+          "roster": {
+            "$pid": {
+              ".validate": "$pid.length <= 20 && newData.hasChildren(['n', 'c'])",
+              "n": {
+                ".validate": "newData.isString() && newData.val().length <= 16"
+              },
+              "c": {
+                ".validate": "newData.isNumber()"
+              },
+              "r": {
+                ".validate": "newData.isBoolean()"
+              },
+              "o": {
+                ".validate": "newData.isNumber()"
+              },
+              "k": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          },
+          "o": {
+            "$pid": {
+              ".validate": "newData.isString() && newData.val().length <= 20000"
+            }
+          },
+          "start": {
+            ".validate": "newData.isString() && newData.val().length <= 3000"
+          },
+          "snap": {
+            ".validate": "newData.isString() && newData.val().length <= 60000"
+          },
+          "ps": {
+            "$pid": {
+              ".validate": "newData.isString() && newData.val().length <= 8000"
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "g": {
+          "$pid": {
+            ".validate": "$pid.length <= 20",
+            "n": {
+              ".validate": "newData.isString() && newData.val().length <= 16"
+            },
+            "c": {
+              ".validate": "newData.isNumber()"
+            },
+            "r": {
+              ".validate": "newData.isBoolean()"
+            },
+            "hb": {
+              ".validate": "newData.isNumber()"
+            },
+            "a": {
+              ".validate": "newData.isString() && newData.val().length <= 20000"
+            },
+            "in": {
+              ".validate": "newData.isString() && newData.val().length <= 400"
+            },
+            "rd": {
+              ".validate": "newData.isString() && newData.val().length <= 8000"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
         }
       }
     }

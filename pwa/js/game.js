@@ -70,8 +70,15 @@ class Weapon {
 }
 
 class Player {
-  constructor(c) {
+  /** id/nome/slot só importam no multiplayer (no modo solo ficam no padrão). */
+  constructor(c, id, name, slot) {
     this.character = c;
+    this.id = id || 'solo'; this.name = name || ''; this.slot = slot || 0;
+    this.alive = true;          // no multiplayer, quem cai vira fantasma até a próxima onda
+    this.levelsPending = 0;
+    this.remote = false;        // controlado por outro computador (a posição chega pela rede)
+    this.tx = 0; this.ty = 0;   // última posição recebida pela rede
+    this.shots = 0; this.lastHarvest = 0;
     this.stats = new Array(Stat.COUNT).fill(0);
     this.stats[Stat.HP] = 10;
     for (let i = 0; i < c.mods.length; i += 2) this.stats[c.mods[i]] += c.mods[i + 1];
@@ -157,9 +164,14 @@ class Game {
     this.cratesDroppedThisWave = 0; this.elitesThisWave = 0;
     this.explosionDepth = 0;
     this.paused = false;
-    this.player = null;
+    this.player = null;   // o jogador deste computador
+    this.players = [];    // todos os jogadores (no modo solo, só um)
+    this.coop = false;    // partida multiplayer
+    this.rec = null;      // quando é uma lista, guarda efeitos/sons para mandar pela rede
+    this.onWaveEnd = null;
+    this.nextEnemyId = 1;
     this.wave = 0; this.waveTime = 0; this.waveDuration = 0; this.spawnTimer = 0;
-    this.kills = 0; this.levelsPending = 0; this.lastHarvest = 0; this.boss = null;
+    this.kills = 0; this.lastHarvest = 0; this.boss = null;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.pickups = []; this.particles = []; this.texts = [];
     this.offers = new Array(SHOP_SLOTS).fill(null);
@@ -170,13 +182,62 @@ class Game {
     this.lastCrit = false;
   }
 
+  /** Melhorias que o jogador deste computador ainda vai escolher. */
+  get levelsPending() { return this.player ? this.player.levelsPending : 0; }
+
+  alivePlayers() { return this.players.filter((p) => p.alive); }
+
+  /** Jogador vivo mais perto do ponto (ou null). */
+  nearestPlayer(x, y) {
+    let best = null, bestD = Infinity;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bestD) { bestD = d; best = p; }
+    }
+    return best;
+  }
+
+  // Sons, vibração e tremida: "p" = só para esse jogador (se for o deste computador).
+  snd(id, p) {
+    if (!p || p === this.player) this.fx.sound(id);
+    if (this.rec) this.rec.push(['s', id, p ? p.id : '']);
+  }
+  vib(ms, p) {
+    if (!p || p === this.player) this.fx.vibrate(ms);
+    if (this.rec) this.rec.push(['v', ms, p ? p.id : '']);
+  }
+  shakeAt(v, p) {
+    if (!p || p === this.player) this.shake = Math.max(this.shake, v);
+    if (this.rec) this.rec.push(['k', v, p ? p.id : '']);
+  }
+
   // --- Fluxo ---
 
   newRun(c, diff) {
     if (diff !== undefined) this.difficulty = clamp(diff, 0, DIFF_NAMES.length - 1);
+    this.coop = false;
     this.player = new Player(c);
     this.player.materials = START_MATERIALS;
-    this.kills = 0; this.levelsPending = 0;
+    this.players = [this.player];
+    this.kills = 0;
+    this.offers.fill(null);
+    this.paused = false;
+    this.startWave(1);
+  }
+
+  /** Partida multiplayer. list = [{id, name, char}], localId = quem joga neste computador. */
+  newCoopRun(list, localId, diff) {
+    if (diff !== undefined) this.difficulty = clamp(diff, 0, DIFF_NAMES.length - 1);
+    this.coop = true;
+    this.players = list.map((d, i) => {
+      const p = new Player(CHARS[d.char] || CHARS[0], d.id, d.name, i);
+      p.materials = START_MATERIALS;
+      p.remote = d.id !== localId;
+      return p;
+    });
+    this.player = this.players.find((p) => !p.remote) || this.players[0];
+    this.kills = 0;
     this.offers.fill(null);
     this.paused = false;
     this.startWave(1);
@@ -191,44 +252,53 @@ class Game {
     this.boss = null;
     this.ending = false;
     this.cratesDroppedThisWave = 0; this.elitesThisWave = 0;
-    const p = this.player;
-    p.crates = 0;
-    p.x = WORLD_W / 2; p.y = WORLD_H / 2;
-    p.hp = p.maxHp(); p.iframes = 1; p.regenAcc = 0;
-    for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; }
+    const count = this.players.length;
+    this.players.forEach((p, i) => {
+      const a = Math.PI * 2 * i / count + Math.PI;
+      p.crates = 0;
+      p.x = WORLD_W / 2 + (count > 1 ? Math.cos(a) * 90 : 0);
+      p.y = WORLD_H / 2 + (count > 1 ? Math.sin(a) * 90 : 0);
+      p.tx = p.x; p.ty = p.y;
+      p.alive = true;
+      p.hp = p.maxHp(); p.iframes = 1; p.regenAcc = 0;
+      for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
+    });
     this.spawnTimer = 0.6;
-    if (n === 10) {
+    if (n === 10 || n === MAX_WAVE) {
       const pos = this.randomSpawnPos(450);
-      this.telegraphs.push({ def: E.LESMA_RAINHA, x: pos[0], y: pos[1], time: 2 });
-      this.showBanner('ONDA 10 - CHEFÃO!');
-    } else if (n === MAX_WAVE) {
-      const pos = this.randomSpawnPos(450);
-      this.telegraphs.push({ def: E.FORMIGA_IMPERATRIZ, x: pos[0], y: pos[1], time: 2 });
-      this.showBanner('ONDA FINAL - CHEFONA!');
-    } else {
-      this.showBanner('ONDA ' + n);
+      this.telegraphs.push({ def: n === 10 ? E.LESMA_RAINHA : E.FORMIGA_IMPERATRIZ, x: pos[0], y: pos[1], time: 2 });
     }
+    this.showBanner(waveBanner(n));
     this.state = 'PLAYING';
   }
 
   nextWave() { if (this.state === 'SHOP') this.startWave(this.wave + 1); }
 
   endWave() {
-    const p = this.player;
     let collected = 0;
     for (const pk of this.pickups) if (pk.type === 0 && !pk.dead) collected += pk.value;
-    this.lastHarvest = Math.max(0, p.stats[Stat.HARVEST]);
-    const gain = collected + this.lastHarvest;
-    p.materials += gain;
-    this.addXp(gain);
+    // As sementes são do time: cada um ganha as que sobraram + a própria colheita.
+    for (const p of this.players) {
+      p.lastHarvest = Math.max(0, p.stats[Stat.HARVEST]);
+      const gain = collected + p.lastHarvest;
+      p.materials += gain;
+      this.addXp(p, gain);
+    }
+    this.lastHarvest = this.player.lastHarvest;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = []; this.pickups = [];
     this.boss = null;
     this.ending = false;
+    if (this.onWaveEnd) this.onWaveEnd();
     if (this.wave >= MAX_WAVE) {
       this.state = 'VICTORY';
       this.fx.runEnded(true, this.wave);
       return;
     }
+    this.enterBetweenWaves();
+  }
+
+  /** Começa o intervalo entre ondas do jogador deste computador: melhorias, caixas e loja. */
+  enterBetweenWaves() {
     if (this.levelsPending > 0) {
       this.state = 'LEVEL_UP';
       this.levelRerolls = 0;
@@ -244,7 +314,7 @@ class Game {
     else this.openShop();
   }
 
-  /** Fim da onda animado: insetos somem e as sementes voam até o jogador. */
+  /** Fim da onda animado: insetos somem e as sementes voam até os jogadores. */
   beginEnding() {
     this.ending = true;
     this.endTimer = 1.3;
@@ -257,7 +327,37 @@ class Game {
     this.boss = null;
     for (const pk of this.pickups) pk.attracted = true;
     this.showBanner('ONDA CONCLUÍDA!');
-    this.fx.sound('WAVE_END');
+    this.snd('WAVE_END');
+  }
+
+  // --- Multiplayer: troca de dados entre os computadores ---
+
+  /** Troca os dados de um jogador (vindos da rede), mantendo id, nome, cor e posição. */
+  replacePlayer(id, data) {
+    const i = this.players.findIndex((p) => p.id === id);
+    if (i < 0) return null;
+    const old = this.players[i];
+    const p = playerFromData(data, old.id, old.name, old.slot);
+    if (!p) return null;
+    p.remote = old.remote;
+    p.x = old.x; p.y = old.y; p.tx = old.tx; p.ty = old.ty; p.alive = old.alive;
+    p.facingLeft = old.facingLeft;
+    this.players[i] = p;
+    if (old === this.player) this.player = p;
+    return p;
+  }
+
+  /** Convidado: começa o intervalo entre ondas com os dados que o anfitrião mandou. */
+  beginRemoteBreak(data, wave) {
+    const p = this.replacePlayer(this.player.id, data);
+    if (!p) return false;
+    this.wave = wave;
+    this.lastHarvest = p.lastHarvest;
+    this.ending = false;
+    this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = []; this.pickups = [];
+    this.boss = null;
+    this.enterBetweenWaves();
+    return true;
   }
 
   // --- Caixas ---
@@ -284,9 +384,24 @@ class Game {
     else this.openShop();
   }
 
+  /** Um jogador caiu (no modo solo, isso é o fim da partida). */
+  playerDown(p) {
+    p.alive = false;
+    p.hp = 0;
+    p.iframes = 0;
+    for (const w of p.weapons) w.attackT = -1;
+    if (this.players.length > 1) {
+      this.burst(p.x, p.y, 24, '255,90,74', 220, 7, 0.6);
+      this.addText(p.x, p.y - 50, (p === this.player ? 'Você' : p.name) + ' caiu!', '#FF8A7A', 30);
+      this.snd('HURT', p);
+      this.vib(300, p);
+    }
+  }
+
   gameOver() {
     this.state = 'GAME_OVER';
     this.player.hp = 0;
+    this.player.alive = false;
     this.fx.sound('HURT');
     this.fx.vibrate(300);
     this.fx.runEnded(false, this.wave);
@@ -296,18 +411,17 @@ class Game {
 
   // --- Level up ---
 
-  addXp(v) {
-    const p = this.player;
+  addXp(p, v) {
     p.xp += v;
     while (p.xp >= p.xpToNext()) {
       p.xp -= p.xpToNext();
       p.level++;
       p.stats[Stat.HP] += 1;
-      p.hp += 1;
-      this.levelsPending++;
-      if (this.state === 'PLAYING') {
+      if (p.alive) p.hp += 1;
+      p.levelsPending++;
+      if (this.state === 'PLAYING' && p.alive) {
         this.addText(p.x, p.y - 50, 'NÍVEL ' + p.level + '!', '#7CFF6B', 34);
-        this.fx.sound('LEVEL_UP');
+        this.snd('LEVEL_UP', p);
       }
     }
   }
@@ -338,7 +452,7 @@ class Game {
     p.stats[stat] += amount;
     if (stat === Stat.HP) p.hp += amount;
     p.hp = Math.min(p.hp, p.maxHp());
-    this.levelsPending--;
+    p.levelsPending--;
     this.fx.sound('BUY');
     if (this.levelsPending > 0) { this.levelRerolls = 0; this.rollLevelChoices(); }
     else this.afterLevelUps();
@@ -468,12 +582,27 @@ class Game {
     this.updatePickups(dt);
     this.updateEffects(dt);
     this.cleanup();
-    if (this.player.hp <= 0) { this.gameOver(); return; }
+    for (const p of this.players) if (p.alive && p.hp <= 0) this.playerDown(p);
+    if (!this.players.some((p) => p.alive)) { this.gameOver(); return; }
     if (this.waveTime >= this.waveDuration) this.beginEnding();
   }
 
   updatePlayer(dt, jx, jy) {
-    const p = this.player;
+    for (const p of this.players) {
+      if (!p.alive) continue;
+      if (p.remote) this.followNet(p, dt);
+      else if (p === this.player) this.movePlayer(p, dt, jx, jy);
+      if (p.iframes > 0) p.iframes -= dt;
+      const regen = p.stats[Stat.REGEN];
+      if (regen > 0 && p.hp < p.maxHp()) {
+        p.regenAcc += dt * regen * 0.12;
+        while (p.regenAcc >= 1) { p.regenAcc -= 1; p.heal(1); }
+      }
+    }
+  }
+
+  /** Anda com o joystick/teclado. */
+  movePlayer(p, dt, jx, jy) {
     let len = Math.hypot(jx, jy);
     if (len > 1) { jx /= len; jy /= len; len = 1; }
     p.moving = len > 0.1;
@@ -487,19 +616,24 @@ class Game {
     }
     p.x = clamp(p.x, p.radius, WORLD_W - p.radius);
     p.y = clamp(p.y, p.radius, WORLD_H - p.radius);
-    if (p.iframes > 0) p.iframes -= dt;
-    const regen = p.stats[Stat.REGEN];
-    if (regen > 0 && p.hp < p.maxHp()) {
-      p.regenAcc += dt * regen * 0.12;
-      while (p.regenAcc >= 1) { p.regenAcc -= 1; p.heal(1); }
-    }
+  }
+
+  /** Jogador de outro computador: desliza até a última posição recebida. */
+  followNet(p, dt) {
+    const k = Math.min(1, dt * 14);
+    p.x += (p.tx - p.x) * k;
+    p.y += (p.ty - p.y) * k;
+    if (p.moving) p.moveAnim += dt * 12;
   }
 
   // --- Inimigos ---
 
-  hpMult() { const w = this.wave - 1; return 1 + 0.25 * w + 0.028 * w * w; }
-  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty]; }
-  enemyCap() { return Math.min(175, 70 + this.wave * 5); }
+  /** Com mais jogadores, os insetos têm mais vida e aparecem mais rápido. */
+  coopHp() { return 1 + 0.6 * (this.players.length - 1); }
+  coopSpawn() { return 1 + 0.25 * (this.players.length - 1); }
+  hpMult() { const w = this.wave - 1; return (1 + 0.25 * w + 0.028 * w * w) * this.coopHp(); }
+  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty] / this.coopSpawn(); }
+  enemyCap() { return Math.min(175 + 15 * (this.players.length - 1), 70 + this.wave * 5 + 15 * (this.players.length - 1)); }
 
   updateSpawns(dt) {
     this.spawnTimer -= dt;
@@ -543,10 +677,10 @@ class Game {
   }
 
   spawnEnemy(d, x, y) {
-    const maxHp = d.hp * (d.boss ? 1 : this.hpMult()) * DIFF_HP[this.difficulty];
+    const maxHp = d.hp * (d.boss ? this.coopHp() : this.hpMult()) * DIFF_HP[this.difficulty];
     const baseDmg = Math.max(1, Math.round(d.damage + d.damagePerWave * (this.wave - 1)));
     const e = {
-      def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
+      id: this.nextEnemyId++, def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
       speed: d.speed * (0.9 + this.rng.float() * 0.2),
       damage: Math.max(1, Math.round(baseDmg * DIFF_DMG[this.difficulty])),
       flash: 0, dead: false, facingLeft: true, anim: 0,
@@ -567,7 +701,7 @@ class Game {
     }
     this.enemies.push(e);
     this.burst(x, y, d.boss ? 30 : 6, '139,107,74', 120, 5, 0.4);
-    if (d.boss) { this.boss = e; this.shake = 10; this.fx.vibrate(120); }
+    if (d.boss) { this.boss = e; this.shakeAt(10); this.vib(120); }
     return e;
   }
 
@@ -576,13 +710,13 @@ class Game {
     for (let tries = 0; tries < 30; tries++) {
       x = 60 + this.rng.float() * (WORLD_W - 120);
       y = 60 + this.rng.float() * (WORLD_H - 120);
-      if (Math.hypot(x - this.player.x, y - this.player.y) >= minDist) break;
+      if (this.players.every((p) => !p.alive || Math.hypot(x - p.x, y - p.y) >= minDist)) break;
     }
     return [x, y];
   }
 
   updateEnemies(dt) {
-    const p = this.player;
+    const ps = this.players;
     const n = this.enemies.length;
     for (let i = 0; i < n; i++) {
       const e = this.enemies[i];
@@ -605,6 +739,7 @@ class Game {
         if (e.burnTime <= 0) e.burnDamage = 0;
       }
 
+      const p = this.nearestPlayer(e.x, e.y) || ps[0]; // persegue o jogador vivo mais perto
       const dx = p.x - e.x, dy = p.y - e.y;
       const d = Math.hypot(dx, dy);
       const nx = d > 0.001 ? dx / d : 0, ny = d > 0.001 ? dy / d : 0;
@@ -661,7 +796,11 @@ class Game {
       if (Math.abs(mx) > 0.05) e.facingLeft = mx < 0;
       e.x = clamp(e.x, e.radius * 0.5, WORLD_W - e.radius * 0.5);
       e.y = clamp(e.y, e.radius * 0.5, WORLD_H - e.radius * 0.5);
-      if (d < e.radius + p.radius - 8) this.damagePlayer(e.damage, e);
+      for (const q of ps) {
+        if (!q.alive) continue;
+        const r = e.radius + q.radius - 8;
+        if ((q.x - e.x) * (q.x - e.x) + (q.y - e.y) * (q.y - e.y) < r * r) this.damagePlayer(q, e.damage, e);
+      }
     }
   }
 
@@ -735,11 +874,10 @@ class Game {
     this.enemyBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false });
   }
 
-  damagePlayer(dmg, source) {
-    const p = this.player;
-    if (p.iframes > 0 || this.state !== 'PLAYING' || this.ending) return;
+  damagePlayer(p, dmg, source) {
+    if (p.iframes > 0 || !p.alive || this.state !== 'PLAYING' || this.ending) return;
     const thorns = p.specials[SP_THORNS];
-    if (source && thorns > 0 && !source.dead) this.damageEnemy(source, thorns, false, 0, 0, 0, 0, '#FF7AB0', null);
+    if (source && thorns > 0 && !source.dead) this.damageEnemy(source, thorns, false, 0, 0, 0, 0, '#FF7AB0', null, p);
     if (this.rng.int(100) < p.dodgeChance()) {
       this.addText(p.x, p.y - 40, 'Esquivou!', '#BFE8FF', 24);
       p.iframes = 0.25;
@@ -748,19 +886,23 @@ class Game {
     const d = Math.max(1, Math.round(dmg * p.armorFactor()));
     p.hp -= d;
     p.iframes = 0.4;
-    this.shake = Math.max(this.shake, 7);
+    this.shakeAt(7, p);
     this.addText(p.x, p.y - 40, '-' + d, '#FF4A4A', 30);
-    this.fx.sound('HURT');
-    this.fx.vibrate(30);
+    this.snd('HURT', p);
+    this.vib(30, p);
   }
 
   // --- Armas ---
 
   updateWeapons(dt) {
-    const p = this.player;
+    for (const p of this.players) if (p.alive) this.updatePlayerWeapons(p, dt);
+  }
+
+  updatePlayerWeapons(p, dt) {
     const n = p.weapons.length;
     for (let i = 0; i < n; i++) {
       const w = p.weapons[i];
+      w.owner = p;
       const a = n === 1 ? (p.facingLeft ? Math.PI : 0) : Math.PI * 2 * i / n - Math.PI / 2;
       const hx = p.x + Math.cos(a) * 44, hy = p.y + Math.sin(a) * 36 + 6;
       const k = Math.min(1, dt * 20);
@@ -785,12 +927,19 @@ class Game {
   }
 
   startMelee(w, t, ang) {
+    const p = w.owner;
     w.dirX = Math.cos(ang); w.dirY = Math.sin(ang);
-    w.reach = clamp(Math.hypot(t.x - w.x, t.y - w.y), 30, w.range(this.player));
-    w.attackDur = clamp(w.cooldown(this.player) * 0.45, 0.12, 0.28);
+    w.reach = clamp(Math.hypot(t.x - w.x, t.y - w.y), 30, w.range(p));
+    w.attackDur = clamp(w.cooldown(p) * 0.45, 0.12, 0.28);
     w.attackT = 0;
     w.hitList.length = 0;
-    this.fx.sound('SHOOT');
+    this.shotSound(p);
+  }
+
+  /** Som de ataque só para as armas do jogador deste computador (os outros recebem pela rede). */
+  shotSound(p) {
+    p.shots++;
+    if (p === this.player) this.fx.sound('SHOOT');
   }
 
   updateMelee(w, dt) {
@@ -814,7 +963,7 @@ class Game {
   }
 
   fireWeapon(w, ang) {
-    const def = w.def, p = this.player;
+    const def = w.def, p = w.owner;
     const range = w.range(p);
     const burn = w.burnDamage(p);
     for (let k = 0; k < def.pellets; k++) {
@@ -831,12 +980,12 @@ class Game {
         radius: def.explosion > 0 || def.burn > 0 || def.slow > 0 ? 10 : 7, dead: false, hit: [],
       });
     }
-    this.fx.sound('SHOOT');
+    this.shotSound(p);
   }
 
   rollDamage(w) {
-    let d = w.baseDamage(this.player);
-    this.lastCrit = this.rng.int(100) < w.critChance(this.player);
+    let d = w.baseDamage(w.owner);
+    this.lastCrit = this.rng.int(100) < w.critChance(w.owner);
     if (this.lastCrit) d *= w.def.critMult;
     return Math.max(1, Math.round(d));
   }
@@ -884,7 +1033,7 @@ class Game {
     this.explodeAt(b.x, b.y, b.explosion, b.damage, b.crit, b.knockback, b.burn, b.source);
   }
 
-  explodeAt(x, y, r, damage, crit, kb, burn, src) {
+  explodeAt(x, y, r, damage, crit, kb, burn, src, owner) {
     if (this.explosionDepth > 6) return; // evita reação em cadeia infinita
     this.explosionDepth++;
     for (const e of this.enemies) {
@@ -894,31 +1043,32 @@ class Game {
       const d2 = dx * dx + dy * dy;
       if (d2 < rr * rr) {
         const d = Math.sqrt(d2) + 0.001;
-        this.damageEnemy(e, damage, crit, dx / d, dy / d, kb, burn, null, src);
+        this.damageEnemy(e, damage, crit, dx / d, dy / d, kb, burn, null, src, owner);
       }
     }
     this.explosionDepth--;
-    if (this.particles.length < 500) {
-      this.particles.push({ x, y, vx: 0, vy: 0, ring: true, size: r, life: 0.3, maxLife: 0.3, color: '255,176,64' });
-    }
+    this.ring(x, y, r);
     this.burst(x, y, 14, '255,154,42', 260, 7, 0.45);
-    this.shake = Math.max(this.shake, 4);
-    this.fx.sound('EXPLODE');
+    this.shakeAt(4);
+    this.snd('EXPLODE');
   }
 
   updateEnemyBullets(dt) {
-    const p = this.player;
     for (const b of this.enemyBullets) {
       b.x += b.vx * dt; b.y += b.vy * dt;
       b.life -= dt;
       if (b.life <= 0 || b.x < -30 || b.y < -30 || b.x > WORLD_W + 30 || b.y > WORLD_H + 30) { b.dead = true; continue; }
-      const r = p.radius * 0.8 + b.radius;
-      const dx = p.x - b.x, dy = p.y - b.y;
-      if (dx * dx + dy * dy < r * r) { b.dead = true; this.damagePlayer(b.damage); }
+      for (const p of this.players) {
+        if (!p.alive) continue;
+        const r = p.radius * 0.8 + b.radius;
+        const dx = p.x - b.x, dy = p.y - b.y;
+        if (dx * dx + dy * dy < r * r) { b.dead = true; this.damagePlayer(p, b.damage); break; }
+      }
     }
   }
 
-  damageEnemy(e, dmg, crit, kx, ky, kb, burn, textColor, src) {
+  /** owner = jogador que causou o dano (roubo de vida, sorte...); se faltar, vem da arma. */
+  damageEnemy(e, dmg, crit, kx, ky, kb, burn, textColor, src, owner) {
     if (e.dead) return;
     if (src) {
       const real = Math.round(Math.min(dmg, Math.max(0, e.hp)));
@@ -940,13 +1090,13 @@ class Game {
       e.burnSource = src || null;
       if (e.burnTick <= 0) e.burnTick = 0.5;
     }
-    const p = this.player;
-    if (p.stats[Stat.LIFESTEAL] > 0 && p.hp < p.maxHp() && this.rng.int(100) < p.stats[Stat.LIFESTEAL]) p.heal(1);
-    if (e.hp <= 0) this.killEnemy(e);
-    else this.fx.sound('HIT');
+    const p = owner || (src && src.owner) || this.players[0];
+    if (p.alive && p.stats[Stat.LIFESTEAL] > 0 && p.hp < p.maxHp() && this.rng.int(100) < p.stats[Stat.LIFESTEAL]) p.heal(1);
+    if (e.hp <= 0) this.killEnemy(e, p);
+    else this.snd('HIT');
   }
 
-  killEnemy(e) {
+  killEnemy(e, owner) {
     e.dead = true;
     this.kills++;
     const drops = e.elite ? e.def.drops * 4 : e.def.drops;
@@ -955,7 +1105,7 @@ class Game {
       const s = drops > 1 ? 60 + this.rng.float() * 180 : 20;
       this.dropMaterial(e.x, e.y, Math.cos(a) * s, Math.sin(a) * s);
     }
-    const p = this.player;
+    const p = owner || this.players[0];
     const luck = Math.max(0.2, 1 + p.stats[Stat.LUCK] / 100);
     if (!e.def.boss && this.rng.float() < 0.025 * luck) {
       this.pickups.push({ type: 1, x: e.x, y: e.y, vx: 0, vy: 0, value: 3 + p.specials[SP_FRUIT], attracted: false, dead: false, bob: 0 });
@@ -968,23 +1118,26 @@ class Game {
     const boom = p.specials[SP_BOOM];
     if (boom > 0 && !e.def.boss && this.rng.int(100) < boom) {
       const dmg = Math.max(1, Math.round((4 + this.wave * 1.5) * p.damageMult()));
-      this.explodeAt(e.x, e.y, 70, dmg, false, 15, 0, null);
+      this.explodeAt(e.x, e.y, 70, dmg, false, 15, 0, null, p);
     }
     if (e.elite) {
-      this.shake = Math.max(this.shake, 6);
+      this.shakeAt(6);
       this.addText(e.x, e.y - 30, 'ELITE!', '#FFD84A', 30);
     }
     this.burst(e.x, e.y, e.def.boss ? 60 : 10, '155,211,58', e.def.boss ? 400 : 180, e.def.boss ? 10 : 6, 0.5);
-    this.fx.sound('KILL');
+    this.snd('KILL');
     if (e.def.boss) {
       if (this.boss === e) this.boss = null;
-      this.shake = 16;
+      this.shakeAt(16);
       this.showBanner('CHEFÃO DERROTADO!');
-      this.fx.vibrate(200);
+      if (this.rec) this.rec.push(['n', 'CHEFÃO DERROTADO!']);
+      this.vib(200);
     }
   }
 
   dropMaterial(x, y, vx, vy) {
+    // No multiplayer nascem mais insetos e as sementes são de todos: algumas não caem, pra renda ficar parecida.
+    if (this.players.length > 1 && this.rng.float() * Math.sqrt(this.coopSpawn()) > 1) return;
     let count = 0;
     for (const pk of this.pickups) if (!pk.dead) count++;
     if (count > 260) {
@@ -997,14 +1150,18 @@ class Game {
   }
 
   updatePickups(dt) {
-    const p = this.player;
-    const range = p.pickupRange();
     for (const pk of this.pickups) {
       if (pk.dead) continue;
       pk.bob += dt;
+      const p = this.nearestPlayer(pk.x, pk.y); // voa até o jogador vivo mais perto
+      if (!p) continue;
       const dx = p.x - pk.x, dy = p.y - pk.y;
       const d = Math.hypot(dx, dy);
-      if (!pk.attracted && d < range) pk.attracted = true;
+      if (!pk.attracted) {
+        for (const q of this.players) {
+          if (q.alive && Math.hypot(q.x - pk.x, q.y - pk.y) < q.pickupRange()) { pk.attracted = true; break; }
+        }
+      }
       if (pk.attracted && d > 0.01) {
         const spd = this.ending ? 1300 : 700;
         pk.vx = dx / d * spd; pk.vy = dy / d * spd;
@@ -1017,17 +1174,17 @@ class Game {
       if (d < p.radius + 12) {
         pk.dead = true;
         if (pk.type === 0) {
-          p.materials += pk.value;
-          this.addXp(pk.value);
-          this.fx.sound('PICKUP');
+          // sementes são do time: todo mundo ganha
+          for (const q of this.players) { q.materials += pk.value; this.addXp(q, pk.value); }
+          this.snd('PICKUP');
         } else if (pk.type === 2) {
           p.crates++;
           this.addText(p.x, p.y - 40, '+1 CAIXA!', '#FFD84A', 30);
-          this.fx.sound('LEVEL_UP');
+          this.snd('LEVEL_UP', p);
         } else {
           p.heal(pk.value);
           this.addText(p.x, p.y - 40, '+' + pk.value, '#6BFF7A', 28);
-          this.fx.sound('LEVEL_UP');
+          this.snd('LEVEL_UP', p);
         }
       }
     }
@@ -1054,6 +1211,7 @@ class Game {
 
   /** color: "r,g,b" (a transparência é aplicada no desenho). */
   burst(x, y, count, color, speed, size, life) {
+    if (this.rec) this.rec.push(['b', Math.round(x), Math.round(y), count, color, speed, size, life]);
     for (let i = 0; i < count; i++) {
       if (this.particles.length >= 500) return;
       const a = this.rng.float() * Math.PI * 2;
@@ -1063,7 +1221,16 @@ class Game {
     }
   }
 
+  /** Anel de explosão. */
+  ring(x, y, r) {
+    if (this.rec) this.rec.push(['r', Math.round(x), Math.round(y), r]);
+    if (this.particles.length < 500) {
+      this.particles.push({ x, y, vx: 0, vy: 0, ring: true, size: r, life: 0.3, maxLife: 0.3, color: '255,176,64' });
+    }
+  }
+
   addText(x, y, text, color, size) {
+    if (this.rec) this.rec.push(['t', Math.round(x), Math.round(y), text, color, size]);
     if (this.texts.length >= 60) this.texts.shift();
     this.texts.push({ x, y, text, color, size, life: 0.7, maxLife: 0.7 });
   }
@@ -1078,49 +1245,33 @@ class Game {
   // --- Salvar e continuar (a partida é salva na loja) ---
 
   saveToString() {
-    if (this.state !== 'SHOP' || !this.player) return null;
-    const p = this.player;
-    return JSON.stringify({
-      v: 2, char: CHARS.indexOf(p.character), diff: this.difficulty, wave: this.wave, kills: this.kills,
-      level: p.level, xp: p.xp, materials: p.materials, harvest: this.lastHarvest, rerolls: this.shopRerolls,
-      stats: p.stats,
-      weapons: p.weapons.map((w) => [WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
-      items: p.items.map((it) => ITEMS.indexOf(it)),
+    if (this.state !== 'SHOP' || !this.player || this.coop) return null;
+    return JSON.stringify(Object.assign({
+      v: 2, diff: this.difficulty, wave: this.wave, kills: this.kills, harvest: this.lastHarvest, rerolls: this.shopRerolls,
+    }, playerToData(this.player), {
       offers: this.offers.map((o) => (!o ? null : o.weapon
         ? ['W', WEAPONS.indexOf(o.weapon), o.tier, o.price, o.locked ? 1 : 0]
         : ['I', ITEMS.indexOf(o.item), o.price, o.locked ? 1 : 0])),
-    });
+    }));
   }
 
   loadFromString(data) {
     try {
       const d = JSON.parse(data);
-      if (!d || d.v !== 2 || !CHARS[d.char]) return false;
-      const p = new Player(CHARS[d.char]);
-      p.weapons = d.weapons.map(([wi, tier, total, wave]) => {
-        const w = new Weapon(WEAPONS[wi], tier);
-        w.totalDamage = total; w.waveDamage = wave;
-        return w;
-      });
-      if (!p.weapons.length || p.weapons.some((w) => !w.def)) return false;
-      p.stats = d.stats.slice(0, Stat.COUNT);
-      for (const ii of d.items) {
-        const it = ITEMS[ii];
-        if (!it) return false;
-        p.items.push(it); // os atributos já estão em "stats"
-        if (it.special >= 0) p.specials[it.special] += it.specialValue;
-      }
-      p.level = d.level; p.xp = d.xp; p.materials = d.materials;
-      p.hp = p.maxHp();
+      if (!d || d.v !== 2) return false;
+      const p = playerFromData(d);
+      if (!p) return false;
       this.offers = d.offers.map((o) => {
         if (!o) return null;
         if (o[0] === 'W') return { weapon: WEAPONS[o[1]], item: null, tier: o[2], price: o[3], locked: !!o[4] };
         return { weapon: null, item: ITEMS[o[1]], tier: ITEMS[o[1]].tier, price: o[2], locked: !!o[3] };
       });
       this.player = p;
+      this.players = [p];
+      this.coop = false;
       this.difficulty = d.diff; this.wave = d.wave; this.kills = d.kills;
       this.lastHarvest = d.harvest; this.shopRerolls = d.rerolls;
-      this.levelsPending = 0; this.paused = false; this.ending = false;
+      this.paused = false; this.ending = false;
       this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
       this.pickups = []; this.particles = []; this.texts = [];
       this.boss = null;
@@ -1140,6 +1291,46 @@ class Game {
     }
     return best;
   }
+}
+
+function waveBanner(n) {
+  return n === 10 ? 'ONDA 10 - CHEFÃO!' : n === MAX_WAVE ? 'ONDA FINAL - CHEFONA!' : 'ONDA ' + n;
+}
+
+/** Jogador -> dados simples (para salvar a partida ou mandar pela rede). */
+function playerToData(p) {
+  return {
+    char: CHARS.indexOf(p.character), level: p.level, xp: p.xp, materials: p.materials,
+    stats: p.stats.slice(),
+    weapons: p.weapons.map((w) => [WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
+    items: p.items.map((it) => ITEMS.indexOf(it)),
+    lp: p.levelsPending, cr: p.crates, hv: p.lastHarvest,
+  };
+}
+
+/** Dados -> jogador novo (ou null se os dados estiverem estragados). */
+function playerFromData(d, id, name, slot) {
+  if (!d || !CHARS[d.char] || !Array.isArray(d.weapons) || !Array.isArray(d.items) || !Array.isArray(d.stats)) return null;
+  const p = new Player(CHARS[d.char], id, name, slot);
+  p.weapons = d.weapons.map(([wi, tier, total, wave]) => {
+    const w = new Weapon(WEAPONS[wi], clamp(tier | 0, 0, 3));
+    w.totalDamage = total || 0; w.waveDamage = wave || 0;
+    w.owner = p;
+    return w;
+  });
+  if (!p.weapons.length || p.weapons.length > MAX_WEAPONS || p.weapons.some((w) => !w.def)) return null;
+  p.stats = d.stats.slice(0, Stat.COUNT).map((v) => Number(v) || 0);
+  while (p.stats.length < Stat.COUNT) p.stats.push(0);
+  for (const ii of d.items) {
+    const it = ITEMS[ii];
+    if (!it) return null;
+    p.items.push(it); // os atributos já estão em "stats"
+    if (it.special >= 0) p.specials[it.special] += it.specialValue;
+  }
+  p.level = d.level | 0 || 1; p.xp = d.xp | 0; p.materials = d.materials | 0;
+  p.levelsPending = d.lp | 0; p.crates = d.cr | 0; p.lastHarvest = d.hv | 0;
+  p.hp = p.maxHp();
+  return p;
 }
 
 function lerpAngle(a, b, t) {

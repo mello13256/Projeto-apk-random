@@ -18,7 +18,7 @@ legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a ho
 
 ### ▶️ **https://mello13256.github.io/Projeto-apk-random/**
 
-O mesmo jogo (versão 2.1, com tudo do APK) roda no navegador do **computador e do celular**,
+O mesmo jogo (com tudo do APK, mais o multiplayer) roda no navegador do **computador e do celular**,
 publicado pelo **GitHub Pages**. Ele funciona até sem internet depois da primeira visita e pode ser
 **instalado como aplicativo**:
 
@@ -26,7 +26,7 @@ publicado pelo **GitHub Pages**. Ele funciona até sem internet depois da primei
 - **No Android (Chrome):** menu ⋮ → **Instalar app**. Ou toque em **Baixar app Android** no menu do jogo para pegar o APK.
 - **No iPhone (Safari):** botão Compartilhar → **Adicionar à Tela de Início**.
 
-No APK, o botão **Jogar online** do menu abre esse site.
+No APK, o botão **👥 Multiplayer** do menu abre esse site direto na tela de multiplayer.
 
 O jogo percebe sozinho se você está usando teclado/mouse ou toque e muda os controles e as dicas:
 
@@ -50,6 +50,36 @@ GitHub Pages (em *Settings → Pages*, a origem é **GitHub Actions**).
 Para testar no seu computador sem publicar: `npx http-server pwa` e abra `http://localhost:8080`.
 Para o robô jogar sozinho com a versão JavaScript: `node pwa/sim.js 20`.
 
+## 👥 Multiplayer (2 a 4 jogadores)
+
+No site, toque em **👥 MULTIPLAYER** no menu:
+
+1. Um jogador toca em **Criar sala** e recebe um código de 4 letras (ex.: `K7QX`).
+   O botão **🔗 Convidar** copia (ou compartilha) um link que já entra na sala.
+2. Os amigos tocam em **Entrar numa sala** e digitam o código — cada um no seu celular ou computador.
+3. Cada um escolhe o legume e toca em **Pronto**; o dono da sala escolhe a dificuldade e toca em **Começar**.
+
+Regras do modo cooperativo:
+
+- Todos jogam na mesma arena. Os insetos perseguem o jogador mais perto.
+- **As sementes são do time:** quando alguém pega, todo mundo ganha. As caixas e as frutas são de quem pegou.
+- Com mais gente, os insetos têm mais vida e aparecem mais rápido.
+- **Quem cai vira fantasminha 👻** e volta na onda seguinte. A partida só acaba se todo mundo cair.
+- Entre as ondas, cada um faz as melhorias e a loja no próprio aparelho; a próxima onda começa
+  quando todos tocarem em **Pronto ✔**.
+- No multiplayer não dá pra pausar, a partida não fica salva e não vale para o ranking.
+
+**Como funciona por dentro:** o aparelho de quem criou a sala (o *anfitrião*) roda a partida.
+Os outros mandam a posição do próprio legume e recebem a arena 15 vezes por segundo (o próprio
+movimento é calculado na hora, sem atraso). A conexão entre os aparelhos é **direta (WebRTC)**;
+o **Firebase** só serve para achar a sala e combinar a conexão. Se a rede bloquear a conexão direta,
+tudo passa pelo Firebase automaticamente (a sala mostra "direto ⚡" ou "via servidor 🌐").
+Código em `pwa/js/net.js` (rede) e `pwa/js/mp.js` (salas e sincronização).
+
+Para testar sem internet: `node tools/fake-firebase.js 9000` e abra
+`http://localhost:8080/?db=http://localhost:9000` em duas abas. O robô também joga em grupo:
+`node pwa/sim.js coop 4` (partidas com 2, 3 e 4 jogadores no mesmo computador).
+
 ## 🏆 Ranking online
 
 No menu, **🏆 Ranking** mostra os 20 melhores de cada dificuldade (do site e do APK juntos).
@@ -60,6 +90,8 @@ O ranking fica no **Firebase Realtime Database** (plano gratuito), acessado dire
 sem bibliotecas (`pwa/js/ranking.js` no site e `Ranking.java` no APK). As **regras de segurança**
 do banco (em [`firebase-rules.json`](firebase-rules.json)) deixam qualquer um ler e enviar
 pontuações, mas ninguém consegue editar ou apagar, e dados inválidos são recusados.
+As mesmas regras liberam as salas do multiplayer (`rooms/CODIGO`), com limite de tamanho em cada campo.
+Para aplicar: no console do Firebase, *Realtime Database → Regras*, cole o arquivo inteiro e clique em **Publicar**.
 
 ## 🎮 Como jogar
 
