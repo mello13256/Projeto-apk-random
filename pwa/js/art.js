@@ -28,9 +28,78 @@ const Art = {
     this.emoji(c.icon, 0, 0, 68);
     ctx.restore();
     const lx = o.lookX === undefined ? (left ? -1 : 1) : o.lookX, ly = o.lookY || 0;
-    this.drawEyes(0, -4, 1, lx, ly);
+    if (c.look === 'cyborg') this.cyborgEyes(left, lx, ly, t);
+    else this.drawEyes(0, -4, 1, lx, ly);
+    this.heroAccessory(c.look, left, t, o);
     this.heroParticles(c.look, t, o, true);
     ctx.restore();
+  },
+
+  /** Olhos do Cyborg: um normal e um visor vermelho. */
+  cyborgEyes(left, lx, ly, t) {
+    const ctx = this.ctx;
+    const s = left ? -1 : 1; // o visor fica do lado da frente
+    this.drawEyeOne(-10 * s, -4, 1, lx, ly);
+    // placa de metal
+    ctx.fillStyle = '#8C96A3';
+    ctx.beginPath();
+    ctx.moveTo(2 * s, -26); ctx.lineTo(26 * s, -22); ctx.lineTo(28 * s, 8); ctx.lineTo(4 * s, 10); ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#3B4048'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#C9D1DB';
+    for (const [rx, ry] of [[6, -20], [22, -18], [8, 4], [23, 4]]) { ctx.beginPath(); ctx.arc(rx * s, ry, 1.8, 0, Math.PI * 2); ctx.fill(); }
+    // olho de LED
+    const glow = 0.7 + 0.3 * Math.sin(t * 6);
+    const g = ctx.createRadialGradient(14 * s, -5, 1, 14 * s, -5, 14);
+    g.addColorStop(0, 'rgba(255,60,60,' + glow + ')');
+    g.addColorStop(1, 'rgba(255,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(14 * s, -5, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#220000';
+    ctx.beginPath(); ctx.ellipse(14 * s, -5, 8, 6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FF2A2A';
+    ctx.beginPath(); ctx.arc(14 * s + lx * 2.5, -5 + ly * 2, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#FFD0D0';
+    ctx.beginPath(); ctx.arc(14 * s + lx * 2.5 - 1.5, -6.5 + ly * 2, 1.4, 0, Math.PI * 2); ctx.fill();
+  },
+
+  drawEyeOne(x, y, s, lx, ly) {
+    const r = 8 * s;
+    const len = Math.hypot(lx, ly);
+    if (len > 0.01) { lx /= len; ly /= len; }
+    this.circle(x, y, r + 2 * s, '#000000');
+    this.circle(x, y, r, '#FFFFFF');
+    this.circle(x + lx * r * 0.4, y + ly * r * 0.4, r * 0.48, '#111111');
+  },
+
+  /** Só a Cenoura Ninja e o Cyborg Cebola têm acessório (faixa ninja; placa de metal e antena). */
+  heroAccessory(look, left, t, o) {
+    const ctx = this.ctx;
+    const s = left ? -1 : 1;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    switch (look) {
+      case 'ninja': { // faixa preta com pontas balançando
+        ctx.fillStyle = '#1C1C22';
+        ctx.fillRect(-26, -17, 52, 8);
+        ctx.fillStyle = '#C9D1DB'; ctx.fillRect(-6, -16, 12, 6); // placa da faixa
+        ctx.fillStyle = '#5A6270'; ctx.beginPath(); ctx.arc(0, -13, 1.8, 0, Math.PI * 2); ctx.fill();
+        const wv = Math.sin(t * 9) * 4 + (o.moving ? 4 : 0);
+        ctx.strokeStyle = '#1C1C22'; ctx.lineWidth = 5;
+        for (const d of [0, 1]) {
+          ctx.beginPath(); ctx.moveTo(-s * 24, -13);
+          ctx.quadraticCurveTo(-s * 38, -10 + d * 8 + wv, -s * (50 + d * 4), -4 + d * 10 - wv);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'cyborg': { // antena
+        ctx.strokeStyle = '#5A6270'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(s * 12, -24); ctx.lineTo(s * 18, -44); ctx.stroke();
+        const on = Math.sin(t * 8) > 0;
+        this.circle(s * 18, -46, 4, on ? '#FF3A3A' : '#7A1A1A');
+        break;
+      }
+    }
   },
 
   /**

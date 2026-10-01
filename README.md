@@ -30,8 +30,8 @@ depois da primeira visita.
 - **👤 Contas:** salve o progresso na nuvem e continue em outro aparelho (site ou app).
 - **🗳️ Enquetes** da comunidade e **🐞 Relatar bug / sugerir ideia** direto do jogo.
 - **Visual novo:** cada legume tem pequenas partículas animadas em volta que mostram o que ele é (brasas na
-  Pimenta, pipocas no Milho, estrelinhas ninja na Cenoura, gotas no Vampiro, pixels no Cyborg...) e todas as
-  armas e projéteis foram redesenhados com detalhes.
+  Pimenta, pipocas no Milho, gotas no Vampiro...). A Cenoura Ninja tem a faixa ninja e o Cyborg Cebola, a placa
+  de metal com olho de LED. Todas as armas e projéteis foram redesenhados com detalhes.
 - **Corrigido:** quando a onda acabava e você andava, as armas ficavam pra trás.
 - **O app Android agora tem o jogo completo** (o mesmo do site, embutido no APK e funcionando offline).
 
