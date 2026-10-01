@@ -4,7 +4,7 @@ name: Publicar PWA
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/sharp-bardeen-h5fvw9]
     paths: ['pwa/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
