@@ -103,7 +103,7 @@
               ".validate": "newData.isString() && newData.val().length <= 20"
             },
             "diff": {
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
             },
             "st": {
               ".validate": "newData.val() === 'lobby' || newData.val() === 'game' || newData.val() === 'closed'"
