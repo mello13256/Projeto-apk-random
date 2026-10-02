@@ -32,6 +32,27 @@ function makeRng(seed) {
 }
 
 const NO_FX = { sound() {}, vibrate() {}, runEnded() {} };
+const DAILY_WAVES = 15;
+// Modificadores do Desafio do Dia
+const DAILY_MODS = [
+  { text: 'Insetos 25% mais rápidos', foeSpeed: 1.25 },
+  { text: 'Sementes valem o dobro', seedMul: 2 },
+  { text: 'Começa com 150 sementes', startSeeds: 120 },
+  { text: 'Loja só com coisas raras (nível II ou mais)', minTier: 1 },
+  { text: 'Elites por todo lado', elites: 4 },
+  { text: 'Insetos explodem ao morrer', boom: 20 },
+  { text: 'Ondas 30% mais curtas e 30% mais insetos', short: 0.7, spawn: 1.3 },
+  { text: 'Vida em dobro, dano pela metade', hp2: true },
+];
+
+/** Desafio do Dia de hoje (igual pra todo mundo): legume, dificuldade e modificador. */
+function dailyChallenge(dateStr) {
+  const date = dateStr || new Date().toISOString().slice(0, 10);
+  let h = 2166136261;
+  for (const ch of 'horta|' + date) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619) >>> 0; }
+  const r = makeRng(h);
+  return { date, seed: h, char: r.int(CHARS.length), diff: 1 + r.int(3), mod: DAILY_MODS[r.int(DAILY_MODS.length)] };
+}
 
 // ---------------------------------------------------------------------------
 // Jogador e armas
@@ -49,7 +70,8 @@ class Weapon {
   }
   attacking() { return this.attackT >= 0; }
   cooldown(p) {
-    const speed = Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100);
+    let speed = Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100) * p.rmod('atk');
+    if (p.kind === 'berserk') speed *= 1 + Math.max(0, 1 - p.hp / p.maxHp()) * 0.6; // Laranja: fúria também acelera
     return Math.max(0.08, this.def.cooldown * TIER_CD[this.tier] / speed);
   }
   range(p) {
@@ -91,6 +113,13 @@ class Player {
     this.mineTimer = 0; this.minionAng = 0; this.minionCd = [];
     // "armas" invisíveis para contar o dano das minas, dos mirtilinhos e do atropelamento
     this.extraSrc = { waveDamage: 0, totalDamage: 0, owner: this, def: null };
+    // Conjuntos (sinergias) já aplicados: família -> 0, 1 (3 peças) ou 2 (5 peças)
+    this.setApplied = {}; this.tagCounts = {};
+    // Estado das mecânicas das classes da versão 4.0
+    this.growth = 0; this.shieldCd = 0; this.fearCd = 3; this.decoyCd = 4; this.gravCd = 3; this.mirrorCd = 0;
+    this.elemT = 0; this.revive = true; this.reviveWait = 0; this.roulette = -1; this.rhealT = 0;
+    this.dashCd = 0; this.dashT = 0; this.dashX = 1; this.dashY = 0; this.dashHit = [];
+    this.auraT = 0; this.shellHp = 0; this.lastInterest = 0;
     this.stats = new Array(Stat.COUNT).fill(0);
     this.stats[Stat.HP] = 10;
     for (let i = 0; i < c.mods.length; i += 2) this.stats[c.mods[i]] += c.mods[i + 1];
@@ -110,8 +139,34 @@ class Player {
   notePeaks() { this.peakLs = Math.max(this.peakLs, this.stats[Stat.LIFESTEAL]); }
   addCy(it) { if (it.cy) for (const k of Object.keys(it.cy)) this.cy[k] += it.cy[k]; }
   maxHp() { return Math.max(1, this.stats[Stat.HP]) * (this.hpMult || 1); }
-  speed() { return 240 * Math.max(0.3, 1 + this.stats[Stat.SPEED] / 100); }
-  damageMult() { return Math.max(0.1, 1 + this.stats[Stat.DAMAGE] / 100); }
+  /** Modificador da roleta do Pêssego (1 = nenhum). */
+  rmod(k) { const r = this.roulette >= 0 ? ROULETTE[this.roulette] : null; return r && r[k] ? r[k] : 1; }
+  speed() { return 240 * Math.max(0.3, 1 + this.stats[Stat.SPEED] / 100) * this.rmod('speed') * (this.dashT > 0 ? 4 : 1); }
+  damageMult() {
+    let m = Math.max(0.1, 1 + this.stats[Stat.DAMAGE] / 100) * (1 + this.growth) * this.rmod('dmg');
+    if (this.kind === 'berserk') m *= 1 + Math.max(0, 1 - this.hp / this.maxHp()) * 1.5; // Laranja: fúria
+    if (this.dmgHalf) m *= 0.5;
+    return m;
+  }
+  /** Recalcula os conjuntos (3 ou 5 coisas da mesma família) e aplica/remove os bônus. */
+  applySets() {
+    const counts = {};
+    for (const it of this.items) for (const t of it.tags || []) counts[t] = (counts[t] || 0) + 1;
+    for (const w of this.weapons) { const t = WEAPON_TAGS.get(w.def); if (t) counts[t] = (counts[t] || 0) + 1; }
+    for (const k of SET_KEYS) {
+      const want = counts[k] >= 5 ? 2 : counts[k] >= 3 ? 1 : 0;
+      const have = this.setApplied[k] || 0;
+      if (want === have) continue;
+      if (have) this.applyBonus(have === 2 ? SETS[k].b5 : SETS[k].b3, -1);
+      if (want) this.applyBonus(want === 2 ? SETS[k].b5 : SETS[k].b3, 1);
+      this.setApplied[k] = want;
+    }
+    this.tagCounts = counts;
+    this.hp = Math.min(this.hp, this.maxHp());
+  }
+  applyBonus(list, sign) {
+    for (const [k, i, v] of list) { if (k === 'S') this.stats[i] += sign * v; else this.specials[i] += sign * v; }
+  }
   dodgeChance() { return Math.min(60, Math.max(0, this.stats[Stat.DODGE])); }
   armorFactor() {
     const a = this.stats[Stat.ARMOR];
@@ -124,6 +179,7 @@ class Player {
     for (let m = 0; m < it.mods.length; m += 2) this.stats[it.mods[m]] += it.mods[m + 1];
     if (it.special >= 0) this.specials[it.special] += it.specialValue;
     this.addCy(it);
+    this.applySets();
     this.hp = Math.min(this.maxHp(), Math.max(this.hp, 1));
     this.notePeaks();
   }
@@ -160,8 +216,8 @@ function itemPool(p, tier) {
   return pool;
 }
 
-function randomOffer(rng, p, wave) {
-  const o = { weapon: null, item: null, tier: rollTier(rng, wave, p.stats[Stat.LUCK]), price: 0, locked: false };
+function randomOffer(rng, p, wave, minTier) {
+  const o = { weapon: null, item: null, tier: Math.max(minTier || 0, rollTier(rng, wave, p.stats[Stat.LUCK])), price: 0, locked: false };
   if (p.kind !== 'laser' && rng.float() < 0.35) { // o Cyborg só usa o canhão: nada de armas na loja
     if (p.weapons.length && rng.float() < 0.35) o.weapon = p.weapons[rng.int(p.weapons.length)].def;
     else o.weapon = WEAPONS[rng.int(WEAPONS.length)];
@@ -198,7 +254,11 @@ class Game {
     this.zone = null;     // duelo: círculo que vai fechando
     this.duelTime = 0; this.countdown = 0; this.duelWinner = null; this.zoneTick = 0;
     this.mines = [];
-    this.input = { aimAng: 0, fire: false }; // mira manual do jogador deste computador (laser)
+    this.decoys = []; this.wells = []; this.echoes = []; // uvas falsas, buracos negros, tiros-eco
+    this.input = { aimAng: 0, fire: false, dash: false }; // mira manual (laser) e dash (Alface)
+    this.daily = null;    // Desafio do Dia: {date, mod}
+    this.runStats = { bosses: 0, elites: 0, bought: 0 };
+    this.foeSlow = 1;
     this.seedsCollected = 0; // sementes ganhas na partida (recordes)
     this.prepDowned = false;
     this.rec = null;      // quando é uma lista, guarda efeitos/sons para mandar pela rede
@@ -220,6 +280,16 @@ class Game {
   get levelsPending() { return this.player ? this.player.levelsPending : 0; }
 
   alivePlayers() { return this.players.filter((p) => p.alive); }
+
+  /** Quem o inseto persegue: uma uva falsa por perto (Uva Ilusionista) ou o jogador mais perto. */
+  targetFor(e) {
+    let best = null, bestD = 500 * 500;
+    for (const dc of this.decoys) {
+      const d = (dc.x - e.x) * (dc.x - e.x) + (dc.y - e.y) * (dc.y - e.y);
+      if (d < bestD) { bestD = d; best = dc; }
+    }
+    return best || this.nearestPlayer(e.x, e.y);
+  }
 
   /** Jogador vivo mais perto do ponto (ou null). */
   nearestPlayer(x, y) {
@@ -249,12 +319,14 @@ class Game {
   /** Última onda da partida (Infinity no modo Infinito). */
   maxWave() {
     if (this.pvp === 'prep') return PVP_PREP_WAVES;
+    if (this.daily) return DAILY_WAVES;
     return DIFF_WAVES[this.difficulty] || Infinity;
   }
   isFinalWave(n) { return n === this.maxWave(); }
 
   /** Chefe que aparece no começo da onda n (ou null). */
   bossFor(n) {
+    if (this.daily) return n === 10 ? E.LESMA_RAINHA : n === DAILY_WAVES ? E.FORMIGA_IMPERATRIZ : null;
     if (this.difficulty === DIFF_ENDLESS && this.pvp !== 'prep') return n % 10 === 0 ? BOSSES[(n / 10 - 1) % 3] : null;
     if (this.difficulty === DIFF_INFERNO && this.pvp !== 'prep') {
       return n === 10 ? E.LESMA_RAINHA : n === 20 || n === 30 ? E.FORMIGA_IMPERATRIZ : n === 35 ? E.BESOURO_INFERNAL : null;
@@ -275,23 +347,31 @@ class Game {
     this.kills = 0; this.seedsCollected = 0;
     this.offers.fill(null);
     this.paused = false;
-    this.mines = [];
+    this.mines = []; this.decoys = []; this.wells = []; this.echoes = [];
+    this.runStats = { bosses: 0, elites: 0, bought: 0 };
     this.zone = null; this.duelWinner = null;
   }
 
-  newRun(c, diff) {
+  newRun(c, diff, daily) {
     if (diff !== undefined) this.difficulty = clamp(diff, 0, DIFF_NAMES.length - 1);
     this.coop = false; this.pvp = '';
+    this.daily = daily || null;
+    if (daily) this.rng = makeRng(daily.seed); // a mesma sorte pra todo mundo no dia
     this.player = new Player(c);
-    this.player.materials = START_MATERIALS;
+    this.player.materials = START_MATERIALS + (c.kind === 'interest' ? 20 : 0) + (this.dmod('startSeeds') || 0);
+    if (this.dmod('boom')) this.player.specials[SP_BOOM] += this.dmod('boom');
+    if (this.dmod('hp2')) { this.player.hpMult = 2; this.player.dmgHalf = true; }
     this.players = [this.player];
     this.resetRunStats();
     this.startWave(1);
   }
 
+  /** Modificador do Desafio do Dia (ou undefined). */
+  dmod(k) { return this.daily && this.daily.mod ? this.daily.mod[k] : undefined; }
+
   /** PvP: as 15 rodadas de preparação (cada um joga sozinho no próprio aparelho). */
   newPvpPrep(c, diff) {
-    this.newRun(c, diff);
+    this.newRun(c, diff, null);
     this.coop = true; this.pvp = 'prep';
     this.startWave(1);
   }
@@ -302,12 +382,12 @@ class Game {
     this.coop = true;
     this.players = list.map((d, i) => {
       const p = new Player(CHARS[d.char] || CHARS[0], d.id, d.name, i);
-      p.materials = START_MATERIALS;
+      p.materials = START_MATERIALS + (p.kind === 'interest' ? 20 : 0);
       p.remote = d.id !== localId;
       return p;
     });
     this.player = this.players.find((p) => !p.remote) || this.players[0];
-    this.pvp = '';
+    this.pvp = ''; this.daily = null;
     this.resetRunStats();
     this.startWave(1);
   }
@@ -318,7 +398,7 @@ class Game {
    */
   newDuel(list, localId, diff) {
     if (diff !== undefined) this.difficulty = diff;
-    this.coop = true; this.pvp = 'duel';
+    this.coop = true; this.pvp = 'duel'; this.daily = null;
     this.players = list.map((d, i) => {
       const p = playerFromData(d.data, d.id, d.name, i) || new Player(CHARS[0], d.id, d.name, i);
       p.remote = d.id !== localId;
@@ -340,6 +420,7 @@ class Game {
       p.x = this.zone.x + Math.cos(a) * 430; p.y = this.zone.y + Math.sin(a) * 330;
       p.tx = p.x; p.ty = p.y; p.alive = true; p.hp = p.maxHp(); p.iframes = 0; p.regenAcc = 0;
       p.facingLeft = Math.cos(a) > 0;
+      p.revive = true; p.growth = 0; p.shieldCd = 0; p.roulette = -1;
       for (const w of p.weapons) { w.cd = 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
     });
     this.showBanner('DUELO!');
@@ -351,7 +432,9 @@ class Game {
     this.waveTime = 0;
     this.waveDuration = this.isFinalWave(n) && this.pvp !== 'prep' ? 90 : Math.min(60, 20 + (n - 1) * 5);
     if (this.pvp === 'prep') this.waveDuration = Math.round(this.waveDuration * 0.75);
-    this.mines = [];
+    if (this.dmod('short')) this.waveDuration = Math.round(this.waveDuration * this.dmod('short'));
+    this.mines = []; this.decoys = []; this.wells = []; this.echoes = [];
+    this.foeSlow = 1;
     this.prepDowned = false;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.pickups = []; this.particles = []; this.texts = [];
@@ -368,6 +451,15 @@ class Game {
       p.alive = true;
       p.hp = p.maxHp(); p.iframes = 1; p.regenAcc = 0;
       p.laser.heat = 0; p.laser.over = false; p.laser.on = false;
+      // classes novas: tudo recomeça a cada onda
+      p.growth = 0; p.shieldCd = 0; p.dashT = 0;
+      if (p.reviveWait > 0) p.reviveWait--; else p.revive = true; // Fênix: recarrega a cada 2 ondas
+      p.dashCd = 0; p.fearCd = 3; p.decoyCd = 4; p.gravCd = 3;
+      p.shellHp = p.specials[SP_SHIELD];
+      if (p.kind === 'roulette') {
+        p.roulette = this.rng.int(ROULETTE.length);
+        if (ROULETTE[p.roulette].slowFoes) this.foeSlow *= ROULETTE[p.roulette].slowFoes;
+      }
       for (const w of p.weapons) { w.cd = this.rng.float() * 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
     });
     this.spawnTimer = 0.6;
@@ -377,6 +469,10 @@ class Game {
       this.telegraphs.push({ def: boss, x: pos[0], y: pos[1], time: 2 });
     }
     this.showBanner(this.waveBanner(n));
+    const me = this.player;
+    if (me && me.kind === 'roulette' && me.roulette >= 0) {
+      this.addText(me.x, me.y - 70, '🎲 ' + ROULETTE[me.roulette].text, ROULETTE[me.roulette].text.includes('azar') ? '#FF8A7A' : '#FFE14A', 26);
+    }
     this.state = 'PLAYING';
   }
 
@@ -384,12 +480,16 @@ class Game {
 
   endWave() {
     let collected = 0;
-    for (const pk of this.pickups) if (pk.type === 0 && !pk.dead) collected += pk.value;
+    for (const pk of this.pickups) if (pk.type === 0 && !pk.dead) collected += pk.value * (this.dmod('seedMul') || 1);
     // As sementes são do time: cada um ganha as que sobraram + a própria colheita.
     for (const p of this.players) {
       p.lastHarvest = Math.max(0, p.stats[Stat.HARVEST]);
-      const gain = collected + p.lastHarvest;
+      const gain = collected * p.rmod('seeds') + p.lastHarvest;
       p.materials += gain;
+      if (p.kind === 'interest') { // Amendoim: juros das sementes guardadas
+        p.lastInterest = Math.min(Math.floor(p.materials * 0.12), 8 + this.wave * 2);
+        p.materials += p.lastInterest;
+      }
       if (p === this.player) this.seedsCollected += gain;
       this.addXp(p, gain);
       p.notePeaks();
@@ -418,6 +518,8 @@ class Game {
       won, wave: this.wave, kills: this.kills, seeds: this.seedsCollected, diff: this.difficulty,
       vamp: won && p.peakLs >= 50,
       alien: won && full && p.stats[Stat.RANGE] > 100,
+      char: CHARS.indexOf(p.character), daily: this.daily ? this.daily.date : null,
+      bosses: this.runStats.bosses, elites: this.runStats.elites, bought: this.runStats.bought,
     };
   }
 
@@ -441,6 +543,7 @@ class Game {
   /** Fim da onda animado: insetos somem e as sementes voam até os jogadores. */
   beginEnding() {
     this.ending = true;
+    this.decoys = []; this.wells = []; this.echoes = [];
     this.endTimer = 1.3;
     for (const e of this.enemies) {
       if (e.dead) continue;
@@ -506,6 +609,21 @@ class Game {
     this.player.crates--;
     if (this.player.crates > 0) this.openCrate();
     else this.openShop();
+  }
+
+  /** Vida chegou a zero: a Batata-Doce Fênix renasce uma vez por onda; os outros caem. */
+  checkDown(p) {
+    if (p.kind === 'phoenix' && p.revive) {
+      p.revive = false; p.reviveWait = this.pvp === 'duel' ? 0 : 2;
+      p.hp = Math.ceil(p.maxHp() * 0.4);
+      p.iframes = 1.5;
+      this.addText(p.x, p.y - 60, 'RENASCEU! 🔥', '#FFB040', 34);
+      this.burst(p.x, p.y, 40, '255,140,30', 320, 9, 0.8);
+      this.explodeAt(p.x, p.y, 190, Math.round((25 + p.stats[Stat.ELEMENTAL] * 4 + this.wave * 3) * p.damageMult()), false, 40, 6, p.extraSrc, p);
+      this.snd('LEVEL_UP', p); this.vib(150, p);
+      return;
+    }
+    this.playerDown(p);
   }
 
   /** Um jogador caiu (no modo solo, isso é o fim da partida). */
@@ -617,7 +735,7 @@ class Game {
     this.state = 'SHOP';
     this.shopRerolls = 0;
     for (let i = 0; i < SHOP_SLOTS; i++) {
-      if (!this.offers[i] || !this.offers[i].locked) this.offers[i] = randomOffer(this.rng, this.player, this.wave + 1);
+      if (!this.offers[i] || !this.offers[i].locked) this.offers[i] = randomOffer(this.rng, this.player, this.wave + 1, this.dmod('minTier'));
     }
   }
 
@@ -629,7 +747,7 @@ class Game {
     this.player.materials -= cost;
     this.shopRerolls++;
     for (let i = 0; i < SHOP_SLOTS; i++) {
-      if (!this.offers[i] || !this.offers[i].locked) this.offers[i] = randomOffer(this.rng, this.player, this.wave + 1);
+      if (!this.offers[i] || !this.offers[i].locked) this.offers[i] = randomOffer(this.rng, this.player, this.wave + 1, this.dmod('minTier'));
     }
     this.fx.sound('PICKUP');
     return true;
@@ -657,6 +775,8 @@ class Game {
       p.addItem(o.item);
     }
     p.materials -= o.price;
+    p.applySets();
+    this.runStats.bought++;
     this.offers[i] = null;
     this.fx.sound('BUY');
     return BUY_OK;
@@ -683,6 +803,7 @@ class Game {
     const other = this.findMergeTarget(w.def, w.tier, idx);
     w.tier++;
     this.player.weapons.splice(other, 1);
+    this.player.applySets();
     this.fx.sound('LEVEL_UP');
     return true;
   }
@@ -692,6 +813,7 @@ class Game {
   sellWeapon(idx) {
     if (!this.canSell(idx)) { this.fx.sound('ERROR'); return false; }
     const w = this.player.weapons.splice(idx, 1)[0];
+    this.player.applySets();
     this.player.materials += w.sellPrice(this.wave + 1);
     this.fx.sound('BUY');
     return true;
@@ -704,7 +826,10 @@ class Game {
     if (this.state !== 'PLAYING' || this.paused) return;
     this.shake = Math.max(0, this.shake - dt * 25);
     const me = this.player;
-    if (me && !me.remote) { me.aimAng = this.input.aimAng; me.wantFire = !!this.input.fire; }
+    if (me && !me.remote) {
+      me.aimAng = this.input.aimAng; me.wantFire = !!this.input.fire;
+      if (this.input.dash) { this.input.dash = false; if (me.kind === 'dash') this.tryDash(me); }
+    }
     if (this.pvp === 'duel') { this.updateDuel(dt, jx, jy); return; }
     if (this.ending) {
       this.updatePlayer(dt, jx, jy);
@@ -729,7 +854,7 @@ class Game {
     this.updatePickups(dt);
     this.updateEffects(dt);
     this.cleanup();
-    for (const p of this.players) if (p.alive && p.hp <= 0) this.playerDown(p);
+    for (const p of this.players) if (p.alive && p.hp <= 0) this.checkDown(p);
     if (this.ending) return; // PvP: cair na preparação já encerrou a rodada
     if (!this.players.some((p) => p.alive)) { this.gameOver(); return; }
     if (this.waveTime >= this.waveDuration) this.beginEnding();
@@ -766,7 +891,7 @@ class Game {
     this.updateBullets(dt);
     this.updateEffects(dt);
     this.cleanup();
-    for (const p of this.players) if (p.alive && p.hp <= 0) this.playerDown(p);
+    for (const p of this.players) if (p.alive && p.hp <= 0) this.checkDown(p);
     const alive = this.players.filter((p) => p.alive);
     if (alive.length <= 1) {
       this.duelWinner = alive.length ? alive[0].id : '';
@@ -830,8 +955,189 @@ class Game {
       else if (k === 'mines') this.updateMineDrop(p, dt);
       else if (k === 'minions') this.updateMinions(p, dt);
       else if (k === 'ram') this.updateRam(p, dt);
+      else if (k === 'aura') this.updateAura(p, dt);
+      else if (k === 'decoy') this.updateDecoyDrop(p, dt);
+      else if (k === 'barrier') p.shieldCd -= dt;
+      else if (k === 'fear') this.updateFear(p, dt);
+      else if (k === 'grow') {
+        p.growth = Math.min(0.75, Math.floor((this.pvp === 'duel' ? this.duelTime : this.waveTime) / 4) * 0.05);
+        p.radius = 26 * (1 + p.growth * 0.5);
+      }
+      else if (k === 'dash') this.updateDash(p, dt);
+      else if (k === 'gravity') this.updateGravity(p, dt);
+      else if (k === 'mirror') this.updateMirror(p, dt);
+      else if (k === 'elements') p.elemT += dt;
+      if (p.roulette >= 0 && ROULETTE[p.roulette].heal) { // roleta: cura total de tempos em tempos
+        p.rhealT += dt;
+        if (p.rhealT >= ROULETTE[p.roulette].heal) { p.rhealT = 0; p.hp = p.maxHp(); this.addText(p.x, p.y - 50, 'CURA!', '#6BFF7A', 26); }
+      }
     }
     if (this.mines.length) this.updateMines(dt);
+    if (this.decoys.length) this.updateDecoys(dt);
+    if (this.wells.length) this.updateWells(dt);
+    for (let i = this.echoes.length - 1; i >= 0; i--) {
+      const ec = this.echoes[i];
+      ec.t -= dt;
+      if (ec.t > 0) continue;
+      this.echoes.splice(i, 1);
+      if (ec.w.owner && ec.w.owner.alive && !this.ending) this.fireWeapon(ec.w, ec.ang, 0.35, true);
+    }
+  }
+
+  /** Dano de habilidade, que cresce com a onda e com o elemental. */
+  abilityDamage(p, base, perWave, elem) {
+    return Math.max(1, Math.round((base + this.wave * perWave + p.stats[Stat.ELEMENTAL] * elem) * p.damageMult()));
+  }
+
+  /** Limão Azedo: aura ácida. */
+  auraRadius(p) { return 100 + Math.max(0, p.stats[Stat.RANGE]) * 0.25 + p.stats[Stat.ELEMENTAL] * 2; }
+  updateAura(p, dt) {
+    p.auraT -= dt;
+    if (p.auraT > 0 || this.ending) return;
+    p.auraT = 0.6;
+    const r = this.auraRadius(p), dmg = this.abilityDamage(p, 2, 0.45, 1.2);
+    for (const f of this.foesOf(p)) {
+      if (f.dead) continue;
+      const rr = r + f.radius;
+      if ((f.x - p.x) * (f.x - p.x) + (f.y - p.y) * (f.y - p.y) > rr * rr) continue;
+      if (!(f instanceof Player)) f.acid = 0.7;
+      this.hitFoe(f, dmg, false, 0, 0, 0, 0, '#D4FF4A', p.extraSrc, p);
+    }
+  }
+
+  /** Uva Ilusionista: deixa uma uva falsa que atrai os insetos e explode. */
+  updateDecoyDrop(p, dt) {
+    p.decoyCd -= dt;
+    if (p.decoyCd > 0 || this.ending) return;
+    p.decoyCd = 12 / Math.sqrt(this.atkFactor(p));
+    this.decoys.push({ x: p.x, y: p.y, t: 4, owner: p, radius: 22 });
+    this.snd('PICKUP', p);
+  }
+  updateDecoys(dt) {
+    for (const dc of this.decoys) {
+      dc.t -= dt;
+      if (dc.t > 0 || this.ending) continue;
+      const p = dc.owner;
+      this.explodeAt(dc.x, dc.y, 140 + p.stats[Stat.ELEMENTAL] * 3, this.abilityDamage(p, 18, 2.2, 3), false, 30, 0, p.extraSrc, p);
+      this.burst(dc.x, dc.y, 20, '150,80,200', 220, 7, 0.6);
+    }
+    this.decoys = this.decoys.filter((dc) => dc.t > 0 && !this.ending);
+  }
+
+  /** Alho Exorcista: bafo que assusta e machuca. */
+  updateFear(p, dt) {
+    p.fearCd -= dt;
+    if (p.fearCd > 0 || this.ending) return;
+    p.fearCd = 6 / Math.sqrt(this.atkFactor(p));
+    const r = 230;
+    this.ring(p.x, p.y, r);
+    this.burst(p.x, p.y, 16, '230,230,200', 260, 6, 0.6);
+    const dmg = this.abilityDamage(p, 5, 1, 2);
+    for (const f of this.foesOf(p)) {
+      if (f.dead) continue;
+      const rr = r + f.radius;
+      if ((f.x - p.x) * (f.x - p.x) + (f.y - p.y) * (f.y - p.y) > rr * rr) continue;
+      if (!(f instanceof Player)) f.fear = 2;
+      this.hitFoe(f, dmg, false, 0, 0, 20, 0, '#F0F4C3', p.extraSrc, p);
+    }
+  }
+
+  /** Alface Ventania: dash. */
+  tryDash(p) {
+    if (p.dashCd > 0 || p.dashT > 0 || !p.alive) return;
+    const len = Math.hypot(p.lookX, p.lookY) || 1;
+    p.dashX = p.lookX / len; p.dashY = p.lookY / len;
+    p.dashT = 0.2; p.dashCd = 2.5; p.dashHit = [];
+    p.iframes = Math.max(p.iframes, 0.3);
+    this.burst(p.x, p.y, 10, '200,255,200', 200, 6, 0.4);
+    this.snd('SHOOT', p);
+  }
+  updateDash(p, dt) {
+    if (p.dashCd > 0) p.dashCd -= dt;
+    if (p.dashT <= 0) return;
+    p.dashT -= dt;
+    if (this.particles.length < 450) this.burst(p.x, p.y, 1, '200,255,200', 40, 6, 0.3);
+    const dmg = this.abilityDamage(p, 10, 1.2, 0) + Math.round(p.stats[Stat.MELEE] * 2 * p.damageMult());
+    for (const f of this.foesOf(p)) {
+      if (f.dead || p.dashHit.includes(f)) continue;
+      const rr = f.radius + p.radius + 10;
+      if ((f.x - p.x) * (f.x - p.x) + (f.y - p.y) * (f.y - p.y) > rr * rr) continue;
+      p.dashHit.push(f);
+      this.hitFoe(f, dmg, false, p.dashX, p.dashY, 25, 0, '#C8FFC8', p.extraSrc, p);
+    }
+  }
+
+  /** Azeitona Gravitacional: buraco negro que puxa e implode. */
+  updateGravity(p, dt) {
+    p.gravCd -= dt;
+    if (p.gravCd > 0 || this.ending) return;
+    const t = this.nearestFoe(p, p.x, p.y, 450, null);
+    if (!t) return;
+    p.gravCd = 7 / Math.sqrt(this.atkFactor(p));
+    this.wells.push({ x: t.x, y: t.y, t: 2, owner: p });
+  }
+  updateWells(dt) {
+    for (const wl of this.wells) {
+      wl.t -= dt;
+      for (const e of this.enemies) {
+        if (e.dead || e.def.boss) continue;
+        const dx = wl.x - e.x, dy = wl.y - e.y, d = Math.hypot(dx, dy);
+        if (d > 270 || d < 6) continue;
+        const pull = 220 * dt * (1 - d / 300);
+        e.x += dx / d * pull; e.y += dy / d * pull;
+      }
+      if (wl.t <= 0 && !this.ending) {
+        const p = wl.owner;
+        this.explodeAt(wl.x, wl.y, 170, this.abilityDamage(p, 15, 2, 3), false, 10, 0, p.extraSrc, p);
+        this.burst(wl.x, wl.y, 24, '120,60,200', 260, 7, 0.6);
+      }
+    }
+    this.wells = this.wells.filter((wl) => wl.t > 0 && !this.ending);
+  }
+
+  /** Pera Espelho: devolve um tiro inimigo, bem mais forte. */
+  updateMirror(p, dt) {
+    if (p.mirrorCd > 0) { p.mirrorCd -= dt; return; }
+    if (this.ending) return;
+    const list = this.pvp === 'duel' ? this.bullets.filter((b) => b.owner && b.owner !== p && !b.dead) : this.enemyBullets;
+    for (const b of list) {
+      if (b.dead) continue;
+      const dx = b.x - p.x, dy = b.y - p.y;
+      if (dx * dx + dy * dy > 90 * 90) continue;
+      b.dead = true;
+      p.mirrorCd = 1 / Math.sqrt(this.atkFactor(p));
+      const t = this.nearestFoe(p, p.x, p.y, 700, null);
+      const a = t ? Math.atan2(t.y - p.y, t.x - p.x) : Math.atan2(-dy, -dx) + Math.PI;
+      const dmg = Math.max(1, Math.round(((b.damage || 3) * 4 + p.stats[Stat.RANGED] * 2 + this.wave * 1.5) * p.damageMult()));
+      this.bullets.push({
+        x: p.x, y: p.y, vx: Math.cos(a) * 760, vy: Math.sin(a) * 760, life: 1.2, damage: dmg, crit: false,
+        pierce: 1, bounce: 0, explosion: 0, burn: 0, slow: 0, source: p.extraSrc, owner: p,
+        knockback: 10, color: '#E1F5FE', lightning: false, mirror: true, radius: 9, dead: false, hit: [],
+      });
+      this.ring(p.x, p.y, 40);
+      this.snd('HIT', p);
+      return;
+    }
+  }
+
+  /** Manga Elementar: 0 = fogo, 1 = gelo, 2 = raio (troca a cada 5 s). */
+  elementOf(p) { return Math.floor(p.elemT / 5) % 3; }
+  elementHit(p, e, dmg) {
+    const el = this.elementOf(p);
+    if (el === 0) {
+      e.burnTime = 2.1;
+      e.burnDamage = Math.max(e.burnDamage || 0, Math.round((3 + p.stats[Stat.ELEMENTAL] * 1.2) * p.damageMult()));
+      e.burnSource = p.extraSrc;
+      if (!(e.burnTick > 0)) e.burnTick = 0.5;
+    } else if (el === 1) {
+      e.slowTime = Math.max(e.slowTime || 0, 1.5);
+    } else {
+      const n = this.nearestEnemy(e.x, e.y, 170, [e]);
+      if (n) {
+        this.damageEnemy(n, Math.max(1, Math.round(dmg * 0.4)), false, 0, 0, 0, 0, '#FFF59D', p.extraSrc, p);
+        this.burst(n.x, n.y, 4, '255,242,122', 140, 3, 0.25);
+      }
+    }
   }
 
   atkFactor(p) { return Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100); }
@@ -1001,6 +1307,7 @@ class Game {
 
   /** Anda com o joystick/teclado. */
   movePlayer(p, dt, jx, jy) {
+    if (p.dashT > 0) { jx = p.dashX; jy = p.dashY; } // dash: vai reto pra frente
     let len = Math.hypot(jx, jy);
     if (len > 1) { jx /= len; jy /= len; len = 1; }
     p.moving = len > 0.1;
@@ -1037,7 +1344,7 @@ class Game {
   hpMult() { return Game.rawHp(this.wave - 1) * this.coopHp(); }
   /** Chefe numa onda depois da "dele" (Infinito, Inferno) fica mais forte. */
   bossScale(d) { return Math.max(1, Game.rawHp(this.wave - 1) / Game.rawHp(d.minWave - 1)); }
-  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty] / this.coopSpawn(); }
+  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty] / this.coopSpawn() / (this.dmod('spawn') || 1); }
   enemyCap() { return Math.min(175 + 15 * (this.players.length - 1), 70 + this.wave * 5 + 15 * (this.players.length - 1)); }
 
   updateSpawns(dt) {
@@ -1088,7 +1395,7 @@ class Game {
     const baseDmg = Math.max(1, Math.round((d.damage + d.damagePerWave * (this.wave - 1)) * Math.pow(1.07, extra)));
     const e = {
       id: this.nextEnemyId++, def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
-      speed: d.speed * (0.9 + this.rng.float() * 0.2),
+      speed: d.speed * (0.9 + this.rng.float() * 0.2) * (this.dmod('foeSpeed') || 1),
       damage: Math.max(1, Math.round(baseDmg * DIFF_DMG[this.difficulty])),
       flash: 0, dead: false, facingLeft: true, anim: 0,
       burnTime: 0, burnTick: 0, burnDamage: 0, burnSource: null, slowTime: 0, elite: false,
@@ -1096,8 +1403,8 @@ class Game {
       spiral: d.boss ? 0 : this.rng.float() * 6.28,
     };
     // Poucos elites por onda: 1 a partir da onda 5, 2 a partir da 10, 3 a partir da 15.
-    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 ? 1 : 0);
-    const eliteChance = 0.012 + 0.004 * this.difficulty;
+    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 ? 1 : 0) + (this.dmod('elites') ? 3 : 0);
+    const eliteChance = (0.012 + 0.004 * this.difficulty) * (this.dmod('elites') || 1);
     if (!d.boss && this.elitesThisWave < maxElites && d !== E.VESPA && this.rng.float() < eliteChance) {
       this.elitesThisWave++;
       e.elite = true;
@@ -1146,11 +1453,14 @@ class Game {
         if (e.burnTime <= 0) e.burnDamage = 0;
       }
 
-      const p = this.nearestPlayer(e.x, e.y) || ps[0]; // persegue o jogador vivo mais perto
+      if (e.acid > 0) e.acid -= dt;
+      if (e.ramCd > 0) e.ramCd -= dt;
+      const p = this.targetFor(e) || ps[0]; // persegue o jogador vivo mais perto (ou a uva falsa)
       const dx = p.x - e.x, dy = p.y - e.y;
       const d = Math.hypot(dx, dy);
-      const nx = d > 0.001 ? dx / d : 0, ny = d > 0.001 ? dy / d : 0;
-      let mx = 0, my = 0, sp = e.speed;
+      let nx = d > 0.001 ? dx / d : 0, ny = d > 0.001 ? dy / d : 0;
+      if (e.fear > 0) { e.fear -= dt; if (!e.def.boss) { nx = -nx; ny = -ny; } } // Alho: foge com medo
+      let mx = 0, my = 0, sp = e.speed * this.foeSlow;
 
       switch (e.def.ai) {
         case AI_CHASE:
@@ -1202,6 +1512,7 @@ class Game {
         mx /= len; my /= len;
       }
       if (e.slowTime > 0) { e.slowTime -= dt; sp *= 0.5; }
+      if (e.freeze > 0) { e.freeze -= dt; sp = 0; }
       e.x += mx * sp * dt;
       e.y += my * sp * dt;
       if (Math.abs(mx) > 0.05) e.facingLeft = mx < 0;
@@ -1318,6 +1629,13 @@ class Game {
 
   damagePlayer(p, dmg, source, iframes) {
     if (p.iframes > 0 || !p.alive || this.state !== 'PLAYING' || this.ending) return;
+    if (p.kind === 'barrier' && p.shieldCd <= 0) { // Abacate: o escudo bloqueia o golpe inteiro
+      p.shieldCd = 6;
+      p.iframes = 0.4;
+      this.addText(p.x, p.y - 44, 'BLOQUEOU!', '#B2FF59', 26);
+      this.explodeAt(p.x, p.y, 120, Math.round((8 + p.stats[Stat.ARMOR] * 2.5 + this.wave * 1.5) * p.damageMult()), false, 45, 0, p.extraSrc, p);
+      return;
+    }
     const thorns = p.specials[SP_THORNS];
     if (source && thorns > 0 && !source.dead) this.damageEnemy(source, thorns, false, 0, 0, 0, 0, '#FF7AB0', null, p);
     if (this.rng.int(100) < p.dodgeChance()) {
@@ -1325,7 +1643,12 @@ class Game {
       p.iframes = 0.25;
       return;
     }
-    const d = Math.max(1, Math.round(dmg * p.armorFactor()));
+    let d = Math.max(1, Math.round(dmg * p.armorFactor()));
+    if (p.shellHp > 0) { // Casca de Ovo: escudo que absorve dano no começo da onda
+      const a = Math.min(p.shellHp, d);
+      p.shellHp -= a; d -= a;
+      if (d <= 0) { p.iframes = 0.3; this.addText(p.x, p.y - 40, 'casca', '#FFF3C4', 20); return; }
+    }
     p.hp -= d;
     p.iframes = iframes || 0.4;
     this.shakeAt(7, p);
@@ -1417,12 +1740,15 @@ class Game {
         w.hitList.push(e);
         const dmg = this.rollDamage(w);
         this.hitFoe(e, dmg, this.lastCrit, w.dirX, w.dirY, w.def.knockback, 0, null, w, w.owner);
+        if (w.owner.kind === 'echo' && !e.dead) this.hitFoe(e, Math.max(1, Math.round(dmg * 0.35)), false, 0, 0, 0, 0, '#FF8FB1', w, w.owner);
       }
     }
   }
 
-  fireWeapon(w, ang) {
+  fireWeapon(w, ang, mult, isEcho) {
     const def = w.def, p = w.owner;
+    mult = mult || 1;
+    if (p.kind === 'echo' && !isEcho) this.echoes.push({ w, ang, t: 0.18 }); // Cereja: o tiro se repete
     const range = w.range(p);
     const burn = w.burnDamage(p);
     for (let k = 0; k < def.pellets; k++) {
@@ -1430,16 +1756,20 @@ class Game {
       if (def.pellets > 1) a += def.spread * (k / (def.pellets - 1) - 0.5);
       else a += (this.rng.float() - 0.5) * def.spread;
       const c = Math.cos(a), s = Math.sin(a);
-      const dmg = this.rollDamage(w);
+      const dmg = Math.max(1, Math.round(this.rollDamage(w) * mult));
       this.bullets.push({
         x: w.x + c * 16, y: w.y + s * 16, vx: c * def.projSpeed, vy: s * def.projSpeed,
         life: (range + 40) / def.projSpeed, damage: dmg, crit: this.lastCrit,
         pierce: def.pierce, bounce: def.bounce, explosion: def.explosion, burn, slow: def.slow, source: w, owner: p,
         knockback: def.knockback, color: def.color, lightning: !!def.lightning,
         radius: def.explosion > 0 || def.burn > 0 || def.slow > 0 ? 10 : 7, dead: false, hit: [],
+        boom: p.kind === 'boomerang', back: false, life0: (range + 40) / def.projSpeed,
       });
+      const nb = this.bullets[this.bullets.length - 1];
+      if (nb.boom) { nb.pierce = 99; nb.bounce = 0; } // Banana: atravessa tudo e volta
+      if (isEcho) nb.echo = true;
     }
-    this.shotSound(p);
+    if (!isEcho) this.shotSound(p);
   }
 
   rollDamage(w) {
@@ -1452,6 +1782,15 @@ class Game {
   updateBullets(dt) {
     for (const b of this.bullets) {
       if (b.dead) continue;
+      if (b.boom && b.owner) { // Banana: na metade do caminho, volta pro dono
+        if (!b.back && b.life <= b.life0 * 0.5) { b.back = true; b.hit = []; b.life = 3; }
+        if (b.back) {
+          const dx = b.owner.x - b.x, dy = b.owner.y - b.y, d = Math.hypot(dx, dy) + 0.01;
+          const sp = Math.hypot(b.vx, b.vy);
+          b.vx += (dx / d * sp - b.vx) * Math.min(1, dt * 8); b.vy += (dy / d * sp - b.vy) * Math.min(1, dt * 8);
+          if (d < 30) { b.dead = true; continue; }
+        }
+      }
       b.x += b.vx * dt; b.y += b.vy * dt;
       b.life -= dt;
       if (b.life <= 0 || b.x < -50 || b.y < -50 || b.x > WORLD_W + 50 || b.y > WORLD_H + 50) {
@@ -1531,6 +1870,8 @@ class Game {
   /** owner = jogador que causou o dano (roubo de vida, sorte...); se faltar, vem da arma. */
   damageEnemy(e, dmg, crit, kx, ky, kb, burn, textColor, src, owner) {
     if (e.dead) return;
+    if (e.acid > 0) dmg = dmg * 1.15; // Limão: ácido amolece o inseto
+    const who = owner || (src && src.owner) || null;
     if (src) {
       const real = Math.round(Math.min(dmg, Math.max(0, e.hp)));
       src.waveDamage += real;
@@ -1538,6 +1879,16 @@ class Game {
     }
     e.hp -= dmg;
     e.flash = 0.08;
+    if (who) {
+      // Balança da Justiça: executa quem está quase morto
+      const ex = who.specials[SP_EXECUTE];
+      if (ex > 0 && !e.def.boss && e.hp > 0 && e.hp < e.maxHp * ex / 100) { e.hp = 0; this.addText(e.x, e.y - e.radius - 14, 'EXECUTADO', '#E0E0E0', 18); }
+      // congelar (Gelo Seco, Galáxia, conjunto Glacial)
+      const fr = who.specials[SP_FREEZE];
+      if (fr > 0 && e.hp > 0 && !e.def.boss && this.rng.int(100) < fr) e.freeze = Math.max(e.freeze || 0, 1.2);
+      // Manga Elementar: fogo, gelo ou choque
+      if (who.kind === 'elements' && src && src.def && e.hp > 0) this.elementHit(who, e, dmg);
+    }
     if (!e.def.boss && kb > 0) {
       const resist = e.def === E.JOANINHA || e.elite ? 0.4 : 1;
       e.vx += kx * kb * 12 * resist;
@@ -1560,6 +1911,8 @@ class Game {
   killEnemy(e, owner) {
     e.dead = true;
     this.kills++;
+    if (e.def.boss) this.runStats.bosses++;
+    if (e.elite) this.runStats.elites++;
     const drops = e.elite ? e.def.drops * 4 : e.def.drops;
     for (let i = 0; i < drops; i++) {
       const a = this.rng.float() * Math.PI * 2;
@@ -1636,8 +1989,9 @@ class Game {
         pk.dead = true;
         if (pk.type === 0) {
           // sementes são do time: todo mundo ganha
-          for (const q of this.players) { q.materials += pk.value; this.addXp(q, pk.value); }
-          this.seedsCollected += pk.value;
+          const v = pk.value * (this.dmod('seedMul') || 1);
+          for (const q of this.players) { const g2 = v * q.rmod('seeds'); q.materials += g2; this.addXp(q, g2); }
+          this.seedsCollected += v * this.player.rmod('seeds');
           this.snd('PICKUP');
         } else if (pk.type === 2) {
           p.crates++;
@@ -1707,7 +2061,7 @@ class Game {
   // --- Salvar e continuar (a partida é salva na loja) ---
 
   saveToString() {
-    if (this.state !== 'SHOP' || !this.player || this.coop) return null;
+    if (this.state !== 'SHOP' || !this.player || this.coop || this.daily) return null;
     return JSON.stringify(Object.assign({
       v: 2, diff: this.difficulty, wave: this.wave, kills: this.kills, harvest: this.lastHarvest, rerolls: this.shopRerolls,
       seeds: this.seedsCollected,
@@ -1799,6 +2153,7 @@ function playerToData(p) {
     weapons: p.weapons.map((w) => [ALL_WEAPONS.indexOf(w.def), w.tier, w.totalDamage, w.waveDamage]),
     items: p.items.map((it) => ALL_ITEMS.indexOf(it)),
     lp: p.levelsPending, cr: p.crates, hv: p.lastHarvest, pk: p.peakLs,
+    sa: SET_KEYS.reduce((o, k) => { if (p.setApplied[k]) o[k] = p.setApplied[k]; return o; }, {}),
   };
 }
 
@@ -1823,6 +2178,16 @@ function playerFromData(d, id, name, slot) {
     p.addCy(it);
   }
   p.peakLs = Math.max(p.peakLs, +d.pk || 0);
+  // conjuntos: os atributos já vêm somados em "stats"; os efeitos especiais são refeitos aqui
+  if (d.sa && typeof d.sa === 'object') {
+    for (const k of SET_KEYS) {
+      const lv = d.sa[k] | 0;
+      if (!lv) continue;
+      p.setApplied[k] = lv;
+      for (const [kk, i, v] of lv === 2 ? SETS[k].b5 : SETS[k].b3) if (kk === 'P') p.specials[i] += v;
+    }
+  }
+  p.applySets();
   p.level = d.level | 0 || 1; p.xp = d.xp | 0; p.materials = d.materials | 0;
   p.levelsPending = d.lp | 0; p.crates = d.cr | 0; p.lastHarvest = d.hv | 0;
   p.hp = p.maxHp();

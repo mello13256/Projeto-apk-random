@@ -50,8 +50,9 @@ function sha256(str) {
   return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-const GAME_VERSION = '3.0';
-const PROGRESS_KEYS = ['bestWave', 'wins', 'totalKills', 'bestDiffWon', 'gamesPlayed', 'totalSeeds', 'bestEndless'];
+const GAME_VERSION = '4.0';
+const PROGRESS_KEYS = ['bestWave', 'wins', 'totalKills', 'bestDiffWon', 'gamesPlayed', 'totalSeeds', 'bestEndless',
+  'bossKills', 'eliteKills', 'itemsBought', 'dailyDays'];
 
 /** Junta o progresso de dois aparelhos: fica o maior de cada recorde. */
 function mergeProgress(local, remote) {
@@ -65,6 +66,12 @@ function mergeProgress(local, remote) {
   out.ach = Object.assign({}, remote.ach || {}, local.ach || {});
   for (const k of Object.keys(remote.ach || {})) if (remote.ach[k]) out.ach[k] = true;
   if (!local.savedRun && typeof remote.savedRun === 'string') out.savedRun = remote.savedRun;
+  out.winsByChar = Object.assign({}, local.winsByChar || {});
+  for (const [k, v] of Object.entries(remote.winsByChar || {})) out.winsByChar[k] = (out.winsByChar[k] | 0) | (v | 0);
+  out.achDone = Object.assign({}, remote.achDone || {}, local.achDone || {});
+  out.lastDaily = (local.lastDaily || '') > (remote.lastDaily || '') ? local.lastDaily || '' : remote.lastDaily || '';
+  const a = local.dailyBest, b = remote.dailyBest, sc = (x) => Ranking.scoreOf(x.won, x.wave, x.kills);
+  if (b && b.date && (!a || b.date > a.date || (b.date === a.date && sc(b) > sc(a)))) out.dailyBest = b;
   return out;
 }
 
@@ -74,6 +81,8 @@ function progressOf(d) {
   p.bestDiffWon = d.bestDiffWon === undefined ? -1 : d.bestDiffWon;
   p.ach = d.ach || {};
   p.savedRun = d.savedRun || null;
+  p.winsByChar = d.winsByChar || {}; p.achDone = d.achDone || {}; p.lastDaily = d.lastDaily || '';
+  if (d.dailyBest) p.dailyBest = d.dailyBest;
   return p;
 }
 

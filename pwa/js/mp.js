@@ -18,7 +18,7 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SLOT_COLORS = ['#4FC3F7', '#FF8A65', '#CE93D8', '#FFD54F'];
 const ENEMY_DEFS = Object.values(E);
 const HOST_TIMEOUT = 25000, GUEST_TIMEOUT = 25000;
-const PH = 20; // campos fixos de cada jogador na foto da arena (depois vêm as armas, 5 números cada)
+const PH = 28; // campos fixos de cada jogador na foto da arena (depois vêm as armas, 5 números cada)
 // Atributos que podem ser trocados no duelo (sorte e colheita não fazem diferença na arena)
 const SWAP_STATS = [Stat.HP, Stat.REGEN, Stat.LIFESTEAL, Stat.DAMAGE, Stat.MELEE, Stat.RANGED, Stat.ELEMENTAL,
   Stat.ATK_SPEED, Stat.CRIT, Stat.RANGE, Stat.ARMOR, Stat.DODGE, Stat.SPEED];
@@ -379,6 +379,7 @@ class Multiplayer {
     p.wantFire = !!(d.f & 4);
     p.aimAng = (d.a | 0) / 100;
     p.lookX = (d.lx | 0) / 100; p.lookY = (d.ly | 0) / 100;
+    if (d.f & 8 && p.kind === 'dash') g.tryDash(p); // Alface: dash do convidado (o dano é do anfitrião)
   }
 
   /** Convidado terminou (ou desfez) a loja. */
@@ -725,9 +726,10 @@ class Multiplayer {
     if (this.sentAt.size > 80) this.sentAt.delete(this.sentAt.keys().next().value);
     const s = JSON.stringify({
       gid: this.gid, w: g.wave, q, tm: Math.round(t), pg: Math.round(this.ping), x: Math.round(p.x), y: Math.round(p.y),
-      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0) | (g.input.fire ? 4 : 0), a: Math.round((g.input.aimAng || 0) * 100),
+      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0) | (g.input.fire ? 4 : 0) | (this.dashSend > 0 ? 8 : 0), a: Math.round((g.input.aimAng || 0) * 100),
       lx: Math.round(p.lookX * 100), ly: Math.round(p.lookY * 100),
     });
+    if (this.dashSend > 0) this.dashSend--;
     if (direct && this.hostPeer.send('i' + s, false)) return;
     this.relayPut('g/' + this.pid + '/in', s);
   }
@@ -773,6 +775,9 @@ class Multiplayer {
       let lr = 0, lw = 0;
       if (p.kind === 'laser') { const st = g.laserStats(p); lr = R(st.range); lw = R(st.width); }
       a.push(R(p.aimAng * 100), R(p.laser.heat * 100) + (p.laser.over ? 1000 : 0), p.laser.on ? 1 : 0, R(p.minionAng * 100) % 100000, lr, lw, p.cy.split);
+      // classes da 4.0: crescimento, roleta, estado (renascer/dash/espelho), recargas, elemento e direção do dash
+      a.push(R(p.growth * 100), p.roulette, (p.revive ? 1 : 0) | (p.dashT > 0 ? 2 : 0) | (p.mirrorCd > 0 ? 4 : 0),
+        R(Math.max(0, p.shieldCd) * 10), R(Math.max(0, p.dashCd) * 10), R(p.elemT * 10) % 1500, R(p.dashX * 100), R(p.dashY * 100));
       for (const w of p.weapons) {
         const ang = w.attacking() ? Math.atan2(w.dirY, w.dirX) : w.angle;
         a.push(ALL_WEAPONS.indexOf(w.def), w.tier, R(ang * 100), R(w.tipX - p.x), R(w.tipY - p.y));
@@ -784,18 +789,22 @@ class Multiplayer {
       o.t = R(g.waveTime * 10); o.d = g.waveDuration; o.en = g.ending ? 1 : 0; o.bs = g.boss && !g.boss.dead ? g.boss.id : 0;
       if (g.zone) { o.z = [R(g.zone.x), R(g.zone.y), R(g.zone.r)]; o.cd = R(g.countdown * 10); }
       if (g.mines.length) { const mi = []; for (const m of g.mines) mi.push(R(m.x), R(m.y), m.arm <= 0 ? 1 : 0); o.mi = mi; }
+      if (g.decoys.length) { const dc = []; for (const d of g.decoys) dc.push(R(d.x), R(d.y), R(d.t * 10)); o.dc = dc; }
+      if (g.wells.length) { const gw = []; for (const w of g.wells) gw.push(R(w.x), R(w.y), R(w.t * 10)); o.gw = gw; }
       const e = [];
       for (const en of g.enemies) {
         if (en.dead) continue;
         const red = (en.def.ai === AI_CHARGE && en.aiState === 1) || ((en.def.ai === AI_BOSS_ANT || en.def.ai === AI_BOSS_BEETLE) && en.aiState === 2);
         e.push(en.id, ENEMY_DEFS.indexOf(en.def), R(en.x), R(en.y), R(1000 * Math.max(0, en.hp) / en.maxHp),
-          (en.elite ? 1 : 0) | (en.facingLeft ? 2 : 0) | (en.flash > 0 ? 4 : 0) | (en.burnTime > 0 ? 8 : 0) | (en.slowTime > 0 ? 16 : 0) | (red ? 32 : 0));
+          (en.elite ? 1 : 0) | (en.facingLeft ? 2 : 0) | (en.flash > 0 ? 4 : 0) | (en.burnTime > 0 ? 8 : 0) | (en.slowTime > 0 ? 16 : 0) | (red ? 32 : 0) |
+          (en.fear > 0 ? 64 : 0) | (en.freeze > 0 ? 128 : 0) | (en.acid > 0 ? 256 : 0));
       }
       o.e = e;
       const b = [];
       for (const x of g.bullets) {
         if (x.dead) continue;
-        const kind = x.minion ? 99 : x.source && x.source.def ? ALL_WEAPONS.indexOf(x.source.def) : -1;
+        let kind = x.minion ? 99 : x.mirror ? 98 : x.source && x.source.def ? ALL_WEAPONS.indexOf(x.source.def) : -1;
+        if (x.boom) kind += 200; // bumerangue da Banana
         b.push(R(x.x), R(x.y), R(x.vx / 10), R(x.vy / 10), kind);
       }
       o.b = b;
@@ -879,6 +888,12 @@ class Multiplayer {
     g.mines = [];
     const mi = o.mi || [];
     for (let i = 0; i + 2 < mi.length; i += 3) g.mines.push({ x: mi[i], y: mi[i + 1], arm: mi[i + 2] ? 0 : 1, owner: g.player });
+    g.decoys = [];
+    const dc = o.dc || [];
+    for (let i = 0; i + 2 < dc.length; i += 3) g.decoys.push({ x: dc[i], y: dc[i + 1], t: dc[i + 2] / 10, owner: g.player, radius: 22 });
+    g.wells = [];
+    const gw = o.gw || [];
+    for (let i = 0; i + 2 < gw.length; i += 3) g.wells.push({ x: gw[i], y: gw[i + 1], t: gw[i + 2] / 10, owner: g.player });
     this.applyPlayers(o, true);
     this.applyWorld(o);
   }
@@ -930,6 +945,13 @@ class Multiplayer {
       if (p !== me) { p.aimAng = a[13] / 100; p.laser.on = !!a[15]; }
       p.minionAng = a[16] / 100;
       p.laserView = { range: a[17], width: a[18], split: a[19] };
+      p.growth = a[20] / 100; p.radius = 26 * (1 + (p.kind === 'grow' ? p.growth * 0.5 : 0));
+      p.roulette = a[21];
+      p.revive = !!(a[22] & 1); p.mirrorCd = a[22] & 4 ? 1 : 0;
+      p.shieldCd = a[23] / 10;
+      if (p !== me) { p.dashT = a[22] & 2 ? 0.1 : 0; p.dashCd = a[24] / 10; p.dashX = a[26] / 100; p.dashY = a[27] / 100; }
+      else if (!(me.dashT > 0)) me.dashCd = Math.min(me.dashCd, a[24] / 10);
+      p.elemT = a[25] / 10;
       // armas (para desenhar)
       const nw = Math.floor((a.length - PH) / 5);
       if (p.weapons.length !== nw) p.weapons.length = Math.min(p.weapons.length, nw);
@@ -979,6 +1001,7 @@ class Multiplayer {
       en.burnTime = f & 8 ? 1 : 0;
       en.slowTime = f & 16 ? 1 : 0;
       en.aiState = f & 32 ? (def.ai === AI_CHARGE ? 1 : 2) : 0;
+      en.fear = f & 64 ? 1 : 0; en.freeze = f & 128 ? 1 : 0; en.acid = f & 256 ? 1 : 0;
       map.set(id, en);
       g.enemies.push(en);
       if (id === o.bs) g.boss = en;
@@ -987,8 +1010,8 @@ class Multiplayer {
     const b = o.b || [];
     g.bullets = [];
     for (let i = 0; i + 4 < b.length; i += 5) {
-      const kind = b[i + 4], wd = ALL_WEAPONS[kind] || null;
-      g.bullets.push({ x: b[i], y: b[i + 1], vx: b[i + 2] * 10, vy: b[i + 3] * 10, wd, minion: kind === 99,
+      const boom = b[i + 4] >= 150, kind = boom ? b[i + 4] - 200 : b[i + 4], wd = ALL_WEAPONS[kind] || null;
+      g.bullets.push({ x: b[i], y: b[i + 1], vx: b[i + 2] * 10, vy: b[i + 3] * 10, wd, minion: kind === 99, mirror: kind === 98, boom,
         lightning: !!(wd && wd.lightning), slow: wd ? wd.slow : 0, burn: wd ? wd.burn : 0, explosion: wd ? wd.explosion : 0,
         radius: kind === 99 ? 6 : wd && (wd.explosion || wd.burn || wd.slow) ? 10 : 7, dead: false });
     }
@@ -1035,6 +1058,16 @@ class Multiplayer {
     if (me.alive && !this.placeMe) g.movePlayer(me, dt, jx, jy);
     if (me.iframes > 0) me.iframes -= dt;
     me.aimAng = g.input.aimAng; me.wantFire = !!g.input.fire;
+    if (me.kind === 'dash') { // Alface: o dash anda na hora aqui; o anfitrião faz o dano
+      if (me.dashCd > 0) me.dashCd -= dt;
+      if (me.dashT > 0) me.dashT -= dt;
+      if (g.input.dash && me.alive && me.dashCd <= 0 && me.dashT <= 0) {
+        const len = Math.hypot(me.lookX, me.lookY) || 1;
+        me.dashX = me.lookX / len; me.dashY = me.lookY / len; me.dashT = 0.2; me.dashCd = 2.5;
+        this.dashSend = 3; // manda nos próximos envios (se um se perder, outro chega)
+      }
+      g.input.dash = false;
+    }
     if (me.kind === 'laser') me.laser.on = me.alive && me.wantFire && !me.laser.over && !g.ending && !(g.zone && g.countdown > 0);
     if (g.zone && g.countdown > 0) g.countdown -= dt;
     for (const p of g.players) {

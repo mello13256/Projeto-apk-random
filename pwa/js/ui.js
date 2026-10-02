@@ -18,9 +18,12 @@ class Prefs {
     this.data = {
       sound: true, music: true, bestWave: 0, wins: 0, totalKills: 0, bestDiffWon: -1, lastChar: 0, lastDiff: 1, savedRun: null,
       gamesPlayed: 0, totalSeeds: 0, ach: {}, bestEndless: 0,
+      bossKills: 0, eliteKills: 0, itemsBought: 0, dailyDays: 0, lastDaily: '', winsByChar: {}, achDone: {},
     };
     try { Object.assign(this.data, JSON.parse(localStorage.getItem('horta_hostil') || '{}')); } catch (e) { /* sem armazenamento */ }
     if (!this.data.ach || typeof this.data.ach !== 'object') this.data.ach = {};
+    if (!this.data.winsByChar || typeof this.data.winsByChar !== 'object') this.data.winsByChar = {};
+    if (!this.data.achDone || typeof this.data.achDone !== 'object') this.data.achDone = {};
     this.onProgress = null; // a conta online é avisada quando o progresso muda
   }
   save() { try { localStorage.setItem('horta_hostil', JSON.stringify(this.data)); } catch (e) { /* ignora */ } }
@@ -35,6 +38,16 @@ class Prefs {
     d.gamesPlayed++;
     if (info.vamp) d.ach.vamp = true;
     if (info.alien) d.ach.alien = true;
+    d.bossKills += info.bosses || 0;
+    d.eliteKills += info.elites || 0;
+    d.itemsBought += info.bought || 0;
+    // grade de vitórias: cada legume x dificuldade (o Infinito não tem vitória)
+    if (info.won && info.char >= 0 && info.diff <= DIFF_INFERNO && !info.daily) d.winsByChar[info.char] = (d.winsByChar[info.char] || 0) | (1 << info.diff);
+    if (info.daily && d.lastDaily !== info.daily) { d.lastDaily = info.daily; d.dailyDays++; }
+    if (info.daily) { // melhor partida de hoje no Desafio do Dia
+      const b = d.dailyBest, sc = Ranking.scoreOf(info.won, info.wave, info.kills || 0);
+      if (!b || b.date !== info.daily || Ranking.scoreOf(b.won, b.wave, b.kills) < sc) d.dailyBest = { date: info.daily, won: !!info.won, wave: info.wave, kills: info.kills || 0 };
+    }
     d.savedRun = null;
     this.save();
     if (this.onProgress) this.onProgress();
@@ -44,6 +57,11 @@ class Prefs {
 }
 
 const RANDOM_CHAR = -1;
+const CHAR_COLS = 11;                        // tela de personagens: 11 colunas x 3 linhas
+const RANK_DAILY = DIFF_NAMES.length;        // aba "Hoje" do ranking (Desafio do Dia)
+const RANK_TABS = DIFF_NAMES.length + 1;
+function achValue(a, rec) { return Math.min(a.goal, Math.max(0, a.value(rec) || 0)); }
+function achDone(a, rec) { return achValue(a, rec) >= a.goal; }
 const WEBSITE_URL = 'https://mello13256.github.io/Projeto-apk-random/';
 /** Abre um link fora do jogo (no app Android, abre o navegador). */
 function openExternal(url) {
@@ -184,7 +202,7 @@ class Ui {
     r.error = '';
     r.entries = null;
     const token = (r.token = (r.token || 0) + 1);
-    Ranking.top(diff).then((list) => {
+    (diff === RANK_DAILY ? Ranking.topAt(Ranking.dailyUrl(dailyChallenge().date)) : Ranking.top(diff)).then((list) => {
       if (token !== r.token) return;
       r.entries = list;
       r.loading = false;
@@ -203,20 +221,23 @@ class Ui {
     const g = this.game, p = g.player;
     if (!p || g.coop) return;
     const info = { diff: g.difficulty, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY', kills: g.kills, level: p.level };
+    const daily = g.daily ? g.daily.date : null;
+    const base = daily ? Ranking.dailyUrl(daily) : RANKING_URL + '/d' + info.diff;
+    const build = Ranking.buildOf(p);
     const go = (name) => {
-      this.rankPost = { status: 'sending' };
+      this.rankPost = { status: 'sending', daily: !!daily };
       const id = this.account.rankId();
       this.rank.myId = id;
-      Ranking.postBest(info.diff, id, {
+      Ranking.postBestAt(base, id, {
         name, character: info.character, wave: info.wave, won: info.won, kills: info.kills, level: info.level,
-        platform: IS_APP ? 'android' : 'web',
+        platform: IS_APP ? 'android' : 'web', b: build,
       }).then((r) => {
         if (!r.posted) {
-          this.rankPost = { status: 'kept', best: r.best };
+          this.rankPost = { status: 'kept', best: r.best, daily: !!daily };
           return null;
         }
-        this.rankPost = { status: 'new', first: !r.best };
-        return Ranking.top(info.diff).then((list) => {
+        this.rankPost = { status: 'new', first: !r.best, daily: !!daily };
+        return Ranking.topAt(base).then((list) => {
           const pos = list.findIndex((e) => e.id === id);
           if (pos >= 0) this.rankPost.pos = pos + 1;
         }, () => {});
@@ -236,7 +257,7 @@ class Ui {
   /** Texto do ranking no fim da partida. */
   rankPostText() {
     const r = this.rankPost || {};
-    const d = DIFF_NAMES[this.game.difficulty];
+    const d = r.daily ? 'Desafio de hoje' : DIFF_NAMES[this.game.difficulty];
     switch (r.status) {
       case 'sending': return ['🏆 Postando no ranking...', '#FFE678'];
       case 'name': return ['🏆 Escolha seu nome pro ranking', '#FFE678'];
@@ -253,7 +274,11 @@ class Ui {
   runEnded(won, wave) {
     const g = this.game;
     const before = this.unlockedChars();
+    const achBefore = ACHIEVEMENTS.map((a) => achDone(a, this.prefs.data));
     this.prefs.recordRun(g.runInfo(won));
+    this.newAch = ACHIEVEMENTS.filter((a, i) => !achBefore[i] && achDone(a, this.prefs.data));
+    for (const a of this.newAch) this.prefs.data.achDone[a.id] = true;
+    if (this.newAch.length) { this.prefs.save(); this.sfx.play('LEVEL_UP'); }
     void wave;
     const after = this.unlockedChars();
     this.newUnlocks = CHARS.filter((c, i) => !before[i] && after[i]).map((c) => c.name).join(', ');
@@ -309,6 +334,7 @@ class Ui {
 
   onDown(id, x, y) {
     const b = this.hit(x, y);
+    if (b && b.action === 'DASH') { this.dashQueued = true; this.down.set(id, null); return; } // Alface: na hora que encosta
     this.down.set(id, b ? { action: b.action, arg: b.arg } : null);
     const g = this.game;
     if (b || g.state !== 'PLAYING' || this.menuOpen()) return;
@@ -320,8 +346,16 @@ class Ui {
     if (!this.joy) this.joy = { id, ox: x, oy: y, x, y };
   }
 
-  /** Mira manual: {aimAng, fire}. Chamado a cada passo do jogo. */
+  /** Entrada extra do jogador a cada passo: mira manual (laser) e dash (Alface). */
   aimInput() {
+    const r = this.aimCore();
+    r.dash = !!this.dashQueued;
+    this.dashQueued = false;
+    return r;
+  }
+
+  /** Mira manual: {aimAng, fire}. */
+  aimCore() {
     const p = this.game.player;
     if (!this.manualAim() || this.menuOpen() || !p.alive) return { aimAng: p ? p.aimAng : 0, fire: false };
     const aj = this.aimJoy;
@@ -383,6 +417,8 @@ class Ui {
         else if (code === 'KeyM') this.doAction('MUSIC');
         else if (code === 'KeyR') this.doAction('RANKING');
         else if (code === 'KeyO') this.doAction('MP');
+        else if (code === 'KeyT') this.doAction('DAILY');
+        else if (code === 'KeyC') this.doAction('ACH');
         break;
       case 'ACCOUNT':
       case 'POLLS':
@@ -402,7 +438,8 @@ class Ui {
         else if (ok) this.doAction(this.mp.isHost() ? 'LOBBY_START' : 'LOBBY_READY');
         break;
       case 'RANKING':
-        if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
+        if (this.rankView) { if (code === 'Escape' || ok) this.rankView = null; }
+        else if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
         else if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyQ') this.doAction('RANK_DIFF', -1);
         else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyE') this.doAction('RANK_DIFF', 1);
         else if (code === 'KeyR') this.doAction('RANK_REFRESH');
@@ -410,13 +447,25 @@ class Ui {
       case 'CHAR_SELECT':
         if (code === 'ArrowLeft' || code === 'KeyA') pickSlot((sel + slots - 1) % slots);
         else if (code === 'ArrowRight' || code === 'KeyD') pickSlot((sel + 1) % slots);
-        else if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowDown' || code === 'KeyS') pickSlot((sel + 8) % slots);
+        else if (code === 'ArrowUp' || code === 'KeyW') pickSlot((sel + slots - CHAR_COLS) % slots);
+        else if (code === 'ArrowDown' || code === 'KeyS') pickSlot((sel + CHAR_COLS) % slots);
         else if (code === 'KeyQ') this.doAction('DIFF', -1);
         else if (code === 'KeyE') this.doAction('DIFF', 1);
         else if (ok) this.doAction('START');
         else if (code === 'Escape') this.doAction('MENU');
         break;
+      case 'DAILY':
+        if (this.rankView) { if (code === 'Escape' || ok) this.rankView = null; }
+        else if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
+        else if (ok) this.doAction('DAILY_START');
+        break;
+      case 'ACHIEVEMENTS':
+        if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
+        else if (code === 'ArrowLeft' || code === 'KeyA') this.doAction('ACH_PAGE', -1);
+        else if (code === 'ArrowRight' || code === 'KeyD') this.doAction('ACH_PAGE', 1);
+        break;
       case 'PLAYING':
+        if ((code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') && g.player && g.player.kind === 'dash' && !this.menuOpen()) this.dashQueued = true;
         if (code === 'Escape' || code === 'KeyP') this.doAction(this.menuOpen() ? 'RESUME' : 'PAUSE');
         else if (this.menuOpen() && code === 'KeyQ') this.doAction('QUIT');
         break;
@@ -507,13 +556,25 @@ class Ui {
       case 'LOBBY_LEAVE': this.mp.leave(); g.state = 'MP_MENU'; break;
       case 'MP_BACK_LOBBY': this.newUnlocks = ''; this.mp.backToLobby(); break;
       case 'UNREADY': this.mp.setReady(false); break;
-      case 'RANKING': g.state = 'RANKING'; this.loadRanking(this.difficulty); break;
-      case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length); break;
+      case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.loadRanking(this.difficulty); break;
+      case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + RANK_TABS) % RANK_TABS); break;
+      case 'RANK_VIEW': this.rankView = (arg >= 100 ? (this.dailyRank || {}).entries : this.rank.entries || [])[arg % 100] || null; this.tipItem = null; break;
+      case 'RANK_CLOSE': this.rankView = null; break;
+      case 'DAILY': this.rankView = null; this.openDaily(); break;
+      case 'DAILY_START': this.newUnlocks = ''; this.startDaily(); break;
+      case 'DAILY_REFRESH': this.loadDailyRank(); break;
+      case 'ACH': this.newUnlocks = ''; g.state = 'ACHIEVEMENTS'; break;
+      case 'ACH_PAGE': this.achPage = (this.achPage || 0) + arg; break;
+      case 'DASH': break;
+      case 'SET_TIP':
+        if (this.tipSet === arg && this.tipTime > 0) this.tipTime = 0;
+        else { this.tipSet = arg; this.tipItem = null; this.tipTime = 3; }
+        break;
       case 'RANK_TAB': this.loadRanking(arg); break;
       case 'RANK_REFRESH': this.loadRanking(this.rank.diff); break;
       case 'ITEM':
         if (this.tipItem === arg && this.tipTime > 0) this.tipTime = 0;
-        else { this.tipItem = arg; this.tipTime = 3; }
+        else { this.tipItem = arg; this.tipSet = null; this.tipTime = 3; }
         break;
       case 'SOUND': this.prefs.data.sound = !this.prefs.data.sound; this.prefs.save(); this.sfx.enabled = this.prefs.data.sound; break;
       case 'MUSIC': this.prefs.data.music = !this.prefs.data.music; this.prefs.save(); this.sfx.setMusic(this.prefs.data.music); break;
@@ -542,6 +603,7 @@ class Ui {
       case 'AGAIN':
         this.newUnlocks = '';
         this.prefs.clearRun();
+        if (g.daily) { this.startDaily(); break; }
         g.newRun(p ? p.character : CHARS[0], g.difficulty);
         this.joy = null;
         break;
@@ -639,6 +701,8 @@ class Ui {
       case 'LEVEL_UP': this.drawLevelUp(); break;
       case 'CRATE': this.drawCrate(); break;
       case 'RANKING': this.drawRanking(); break;
+      case 'DAILY': this.drawDaily(); break;
+      case 'ACHIEVEMENTS': this.drawAchievements(); break;
       case 'SHOP': this.drawShop(); break;
       default: this.drawEnd();
     }
@@ -660,19 +724,25 @@ class Ui {
   drawMenu() {
     this.drawMenuBackground();
     const cx = this.vw / 2, d = this.prefs.data;
-    const n = CHARS.length, step = Math.min(78, (this.vw - 80) / n);
+    const half = Math.ceil(CHARS.length / 2), step = Math.min(70, (this.vw - 80) / half);
     CHARS.forEach((c, i) => {
-      const x = cx + (i - (n - 1) / 2) * step;
-      this.drawHero(c, x, 74 + Math.sin(this.time * 3 + i) * 8, Math.min(58, step * 0.85), { facingLeft: i < n / 2, lookX: 0, lookY: 0.3 });
+      const row = i < half ? 0 : 1, k = row ? i - half : i, n = row ? CHARS.length - half : half;
+      const x = cx + (k - (n - 1) / 2) * step;
+      this.drawHero(c, x, 44 + row * 56 + Math.sin(this.time * 3 + i) * 6, Math.min(48, step * 0.8), { facingLeft: k < n / 2, lookX: 0, lookY: 0.3 });
     });
-    this.text('HORTA HOSTIL', cx, 182, 84, C.GOLD, 'center');
+    this.text('HORTA HOSTIL', cx, 186, 76, C.GOLD, 'center');
     this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 222, 24, '#E8F5D0', 'center');
     const big = d.savedRun
-      ? [['CONTINUAR', 'CONTINUE', C.GREEN], ['NOVO JOGO', 'PLAY', C.ORANGE], ['👥 MULTIPLAYER', 'MP', C.BLUE]]
-      : [['JOGAR', 'PLAY', C.GREEN], ['👥 MULTIPLAYER', 'MP', C.BLUE]];
-    const bg = 20, bbw = Math.min(340, (this.vw - 80 - bg * (big.length - 1)) / big.length);
+      ? [['CONTINUAR', 'CONTINUE', C.GREEN], ['NOVO JOGO', 'PLAY', C.ORANGE], ['📅 DESAFIO DO DIA', 'DAILY', '#C0571E'], ['👥 MULTIPLAYER', 'MP', C.BLUE]]
+      : [['JOGAR', 'PLAY', C.GREEN], ['📅 DESAFIO DO DIA', 'DAILY', '#C0571E'], ['👥 MULTIPLAYER', 'MP', C.BLUE]];
+    const bg = 16, bbw = Math.min(330, (this.vw - 60 - bg * (big.length - 1)) / big.length);
     const bbx = cx - (bbw * big.length + bg * (big.length - 1)) / 2;
-    big.forEach(([label, action, color], i) => this.button(bbx + i * (bbw + bg), 245, bbw, 84, label, action, 0, color, true, 38));
+    big.forEach(([label, action, color], i) => this.button(bbx + i * (bbw + bg), 245, bbw, 84, label, action, 0, color, true, 36));
+    const today = dailyChallenge().date;
+    if (d.dailyBest && d.dailyBest.date === today) {
+      const di = big.findIndex((b) => b[1] === 'DAILY');
+      this.text('✔ jogado hoje', bbx + di * (bbw + bg) + bbw / 2, 348, 18, '#FFC870', 'center');
+    }
     if (d.savedRun) {
       let wave = '?';
       try { wave = JSON.parse(d.savedRun).wave; } catch (e) { /* ignora */ }
@@ -681,8 +751,10 @@ class Ui {
     const fsOk = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
     const showApk = IS_ANDROID && !IS_STANDALONE && !IS_APP;
     const acc = this.account && this.account.user;
+    const achN = ACHIEVEMENTS.filter((a) => achDone(a, d) || d.achDone[a.id]).length;
     const row1 = [
       ['🏆 Ranking', 'RANKING', true, '#B8860B'],
+      ['🏅 Conquistas ' + achN + '/' + ACHIEVEMENTS.length, 'ACH', true, '#6E8B1E'],
       ['🗳️ Enquetes', 'POLLS', true, '#7B4FB0'],
       [acc ? '👤 ' + acc.name : '👤 Entrar / Conta', 'ACCOUNT', true, '#2E7D9A'],
       ['🐞 Relatar bug', 'REPORT', true, '#A0522D'],
@@ -693,16 +765,17 @@ class Ui {
       IS_APP ? ['Abrir o site', 'SITE', true] : showApk ? ['Baixar app Android', 'APK', true] : ['Tela cheia', 'FULLSCREEN', fsOk],
       ['Como jogar', 'HELP', true],
     ];
-    const gap = 14, bw = Math.min(250, (this.vw - 60 - gap * 3) / 4), bx = cx - (bw * 4 + gap * 3) / 2;
-    row1.forEach(([label, action, en, col], i) => this.button(bx + i * (bw + gap), 362, bw, 62, label, action, 0, col, en, 24));
+    const gap = 12, bw1 = Math.min(220, (this.vw - 60 - gap * 4) / 5), bx1 = cx - (bw1 * 5 + gap * 4) / 2;
+    row1.forEach(([label, action, en, col], i) => this.button(bx1 + i * (bw1 + gap), 362, bw1, 62, label, action, 0, col, en, 22));
+    const bw = Math.min(250, (this.vw - 60 - gap * 3) / 4), bx = cx - (bw * 4 + gap * 3) / 2;
     row2.forEach(([label, action, en], i) => this.button(bx + i * (bw + gap), 436, bw, 56, label, action, 0, action === 'APK' ? C.BLUE : C.GRAY, en, 22));
     this.text('Melhor onda: ' + d.bestWave + '   •   Vitórias: ' + d.wins + '   •   Insetos derrotados: ' + d.totalKills, cx, 540, 23, '#CFE3B8', 'center');
     const unlocked = this.unlockedChars().filter((u) => u).length;
     this.text('Personagens liberados: ' + unlocked + '/' + CHARS.length + (d.bestEndless ? '   •   Recorde no Infinito: onda ' + d.bestEndless : ''), cx, 574, 21, '#B8CFA0', 'center');
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
-    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  O: multiplayer  •  R: ranking  •  M: música  •  H: ajuda  •  F: tela cheia', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v3.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
+    this.text('Projeto escolar • feito com JavaScript puro • v4.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -804,9 +877,9 @@ class Ui {
     // escolha do legume
     const unlocked = this.unlockedChars();
     this.text('Seu legume:', 30, 334, 24, '#FFFFFF', 'left');
-    const n = CHARS.length, s = Math.min(86, (vw - 60 - (n - 1) * 8) / n), rowX = cx - (s * n + 8 * (n - 1)) / 2;
+    const n = CHARS.length, per = Math.ceil(n / 2), s = Math.min(52, (vw - 60 - (per - 1) * 8) / per), rowX = cx - (s * per + 8 * (per - 1)) / 2;
     for (let i = 0; i < n; i++) {
-      const x = rowX + i * (s + 8), y = 348, sel = mp.myChar === i;
+      const x = rowX + (i % per) * (s + 8), y = 340 + Math.floor(i / per) * (s + 6), sel = mp.myChar === i;
       this.roundRect(x, y, s, s, 14, sel ? '#3F5A26' : unlocked[i] ? '#2A2116' : '#1E1A14', sel ? C.GOLD : unlocked[i] ? C.PANEL_BORDER : '#4A4038', sel ? 4 : 2);
       this.register(x, y, s, s, 'LOBBY_CHAR', i, true);
       this.ctx.globalAlpha = unlocked[i] ? 1 : 0.3;
@@ -817,7 +890,7 @@ class Ui {
     const cd = CHARS[mp.myChar];
     let info = cd.name + ' • Arma: ' + cd.startWeapon.name;
     for (let m = 0; m < cd.mods.length; m += 2) info += ' • ' + Stat.format(cd.mods[m], cd.mods[m + 1]);
-    this.textFit(info, cx, 470, 20, vw - 60, '#E8F5D0');
+    this.textFit(info, cx, 474, 19, vw - 60, '#E8F5D0');
     // modo (cooperativo ou PvP) e dificuldade
     const half = (vw - 80) / 2, mx = 30, dx = 50 + half;
     const pvp = mp.mode === 'pvp';
@@ -848,40 +921,42 @@ class Ui {
   // --- Personagens ---
 
   drawCharSelect() {
-    this.text('ESCOLHA SEU LEGUME', this.vw / 2, 50, 40, C.GOLD, 'center');
+    this.text('ESCOLHA SEU LEGUME', this.vw / 2, 44, 36, C.GOLD, 'center');
     const unlocked = this.unlockedChars();
-    const cols = 8, gap = 10, vw = this.vw;
-    const cw = (vw - 60 - gap * (cols - 1)) / cols, ch = 128;
+    const cols = CHAR_COLS, gap = 8, vw = this.vw;
+    const cw = (vw - 60 - gap * (cols - 1)) / cols, ch = 84;
+    const wins = this.prefs.data.winsByChar || {};
     for (let i = 0; i <= CHARS.length; i++) {
-      const x = 30 + (i % cols) * (cw + gap), y = 70 + Math.floor(i / cols) * (ch + gap);
+      const x = 30 + (i % cols) * (cw + gap), y = 60 + Math.floor(i / cols) * (ch + gap);
       const random = i === CHARS.length;
       const sel = random ? this.selectedChar === RANDOM_CHAR : i === this.selectedChar;
       const open = random || unlocked[i];
       const hov = this.isHover(x, y, cw, ch);
-      this.roundRect(x, y, cw, ch, 16, sel ? '#3F5A26' : !open ? '#1E1A14' : hov ? '#3A2E1E' : '#2A2116',
-        sel ? C.GOLD : open ? C.PANEL_BORDER : '#4A4038', sel ? 5 : 3);
+      this.roundRect(x, y, cw, ch, 14, sel ? '#3F5A26' : !open ? '#1E1A14' : hov ? '#3A2E1E' : '#2A2116',
+        sel ? C.GOLD : open ? C.PANEL_BORDER : '#4A4038', sel ? 4 : 2);
       this.register(x, y, cw, ch, random ? 'RANDOM' : 'CHAR', i, true);
       const cx = x + cw / 2;
       const bob = sel ? Math.sin(this.time * 6) * 3 : 0;
       if (random) {
-        this.emoji('🎲', cx, y + 52 + bob, 56);
-        this.textFit('Aleatório', cx, y + 112, 18, cw - 10, '#FFFFFF');
+        this.emoji('🎲', cx, y + 36 + bob, 42);
+        this.textFit('Aleatório', cx, y + 76, 14, cw - 8, '#FFFFFF');
         continue;
       }
       const cd = CHARS[i];
       if (!open) {
         this.ctx.globalAlpha = 0.3;
-        this.emoji(cd.icon, cx, y + 52, 56);
+        this.emoji(cd.icon, cx, y + 36, 44);
         this.ctx.globalAlpha = 1;
-        this.emoji('🔒', cx + 24, y + 70, 28);
-        this.textFit(cd.name, cx, y + 112, 16, cw - 10, '#9A9A9A');
-        continue;
+        this.emoji('🔒', cx + 20, y + 50, 22);
+      } else {
+        this.drawHero(cd, cx, y + 36 + bob, Math.min(48, cw * 0.62), { facingLeft: false, lookX: sel ? 1 : 0, lookY: sel ? 0 : 0.3 });
       }
-      this.drawHero(cd, cx, y + 54 + bob, 60, { facingLeft: false, lookX: sel ? 1 : 0, lookY: sel ? 0 : 0.3 });
-      this.textFit(cd.name, cx, y + 116, 16, cw - 10, '#FFFFFF');
+      if (wins[i] & 16) this.emoji('😈', x + cw - 12, y + 13, 16);
+      else if (wins[i]) this.emoji('🏆', x + cw - 12, y + 13, 14);
+      this.winDots(i, cx, y + ch - 10, Math.min(5, cw / 16));
     }
     // detalhes do escolhido
-    const py = 352, ph = 256;
+    const py = 340, ph = 270;
     this.panel(30, py, vw - 60, ph);
     const idx = this.selectedChar;
     if (idx === RANDOM_CHAR) {
@@ -907,6 +982,17 @@ class Ui {
       }
       const ay = this.wrapped('⭐ ' + cd.ability, tx, my + 34, tw - 10, 19, '#FFFFFF', 'left');
       if (!open) this.wrapped('🔒 Para liberar: ' + unlockText(cd), tx, ay + 6, tw - 10, 20, '#FFC870', 'left');
+      // grade de vitórias deste legume
+      const mask = (this.prefs.data.winsByChar || {})[idx] || 0;
+      this.text('Vitórias:', 30 + 16, py + ph - 18, 17, '#CFE3B8', 'left');
+      let wx = 30 + 16 + this.measure('Vitórias: ', 17);
+      for (let k = 0; k <= DIFF_INFERNO; k++) {
+        const won = mask & (1 << k), label = DIFF_ICONS[k] + ' ' + DIFF_NAMES[k] + (won ? ' ✔' : '');
+        const w = this.measure(label, 15) + 16;
+        this.roundRect(wx, py + ph - 36, w, 26, 10, won ? DIFF_COLORS[k] : 'rgba(0,0,0,0.35)', won ? '#FFFFFF' : 'rgba(255,255,255,0.2)', 1);
+        this.text(label, wx + 8, py + ph - 17, 15, won ? '#1A1A1A' : '#8A8A8A', 'left');
+        wx += w + 6;
+      }
     }
     // linha de baixo: voltar, dificuldade, começar
     const by = VH - 98, narrow = vw < 1200;
@@ -934,11 +1020,12 @@ class Ui {
     this.drawMenuBackground();
     this.text('🏆 RANKING ONLINE', cx, 62, 46, C.GOLD, 'center');
     // abas de dificuldade
-    const nt = DIFF_NAMES.length, tw = Math.min(200, (vw - 60 - (nt - 1) * 10) / nt), tx = cx - (tw * nt + (nt - 1) * 10) / 2;
-    for (let i = 0; i < DIFF_NAMES.length; i++) {
+    const nt = RANK_TABS, tw = Math.min(180, (vw - 60 - (nt - 1) * 8) / nt), tx = cx - (tw * nt + (nt - 1) * 8) / 2;
+    for (let i = 0; i < nt; i++) {
       const sel = i === r.diff;
-      this.button(tx + i * (tw + 10), 88, tw, 58, DIFF_ICONS[i] + ' ' + DIFF_NAMES[i], 'RANK_TAB', i, sel ? '#4CAF50' : C.GRAY, true, 22);
-      if (sel) this.roundRect(tx + i * (tw + 10), 88, tw, 53, 16, null, C.GOLD, 4);
+      const label = i === RANK_DAILY ? '📅 Hoje' : DIFF_ICONS[i] + ' ' + DIFF_NAMES[i];
+      this.button(tx + i * (tw + 8), 88, tw, 58, label, 'RANK_TAB', i, sel ? '#4CAF50' : i === RANK_DAILY ? '#C0571E' : C.GRAY, true, 22);
+      if (sel) this.roundRect(tx + i * (tw + 8), 88, tw, 53, 16, null, C.GOLD, 4);
     }
     // lista (2 colunas de 10)
     const top = 168, rowH = 42, colW = Math.min(560, (vw - 90) / 2), x0 = cx - colW - 15;
@@ -948,7 +1035,7 @@ class Ui {
     } else if (r.error) {
       this.text(r.error, cx, top + 200, 26, '#FF9A8A', 'center');
     } else if (r.entries && r.entries.length === 0) {
-      this.text('Ninguém no ranking do ' + DIFF_NAMES[r.diff] + ' ainda.', cx, top + 185, 28, '#E8F5D0', 'center');
+      this.text(r.diff === RANK_DAILY ? 'Ninguém jogou o desafio de hoje ainda.' : 'Ninguém no ranking do ' + DIFF_NAMES[r.diff] + ' ainda.', cx, top + 185, 28, '#E8F5D0', 'center');
       this.text('Jogue e seja o primeiro!', cx, top + 225, 24, '#CFE3B8', 'center');
     } else if (r.entries) {
       const medals = ['🥇', '🥈', '🥉'];
@@ -956,6 +1043,8 @@ class Ui {
         const x = x0 + Math.floor(i / 10) * (colW + 30), y = top + (i % 10) * rowH;
         const mine = e.id === r.myId;
         if (mine) this.roundRect(x - 4, y, colW, rowH - 4, 10, 'rgba(255,216,74,0.25)', C.GOLD, 2);
+        else if (this.isHover(x - 4, y, colW, rowH - 4)) this.roundRect(x - 4, y, colW, rowH - 4, 10, 'rgba(255,255,255,0.08)');
+        this.register(x - 4, y, colW, rowH - 4, 'RANK_VIEW', i, true);
         if (i < 3) this.emoji(medals[i], x + 20, y + 19, 30);
         else this.text((i + 1) + 'º', x + 20, y + 28, 20, '#CFE3B8', 'center');
         const ch = CHARS[e.character];
@@ -964,13 +1053,14 @@ class Ui {
         const res = e.won ? '🏆 Venceu' : 'Onda ' + e.wave;
         this.text(res, x + colW - 150, y + 28, 19, e.won ? C.GOLD : '#E8F5D0', 'right');
         this.text(shortNum(e.kills) + ' 🐛', x + colW - 58, y + 28, 18, '#CFE3B8', 'right');
-        this.emoji(e.platform === 'android' ? '📱' : '💻', x + colW - 30, y + 18, 22);
+        this.emoji(e.b ? '🔍' : e.platform === 'android' ? '📱' : '💻', x + colW - 30, y + 18, 22);
       });
     }
     this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
     this.button(vw - 230, VH - 96, 200, 74, 'Atualizar', 'RANK_REFRESH', 0, C.GRAY, !r.loading, 28);
-    this.text('Ordem: quem venceu, depois a onda alcançada e os insetos derrotados.', cx, VH - 54, 18, 'rgba(255,255,255,0.6)', 'center');
+    this.text(r.diff === RANK_DAILY ? 'Desafio de hoje: ' + dailyChallenge().date.split('-').reverse().join('/') + '  •  toque num jogador pra ver a build 🔍' : 'Ordem: vitória, onda e insetos  •  toque num jogador pra ver a build 🔍', cx, VH - 54, 18, 'rgba(255,255,255,0.6)', 'center');
     if (!this.touch) this.text('Setas: dificuldade  •  R: atualizar  •  Esc: voltar', cx, VH - 26, 16, 'rgba(255,255,255,0.45)', 'center');
+    if (this.rankView) this.drawRankView();
   }
 
   // --- Caixa ---
@@ -1108,6 +1198,7 @@ class Ui {
       ctx.stroke();
     }
 
+    this.drawAbilityGround();
     // minas da Melancia
     for (const m of g.mines) {
       const armed = m.arm <= 0;
@@ -1161,6 +1252,7 @@ class Ui {
       this.drawPlayer(p);
       for (const w of p.weapons) this.drawWeapon(w, p.laser.heat);
       if (p.kind === 'minions') this.drawMinions(p);
+      this.drawAbilityOver(p);
     }
     for (const p of g.players) if (p.alive && p.kind === 'laser') this.drawLaser(p);
     if (g.coop) {
@@ -1291,7 +1383,10 @@ class Ui {
     else if ((e.def.ai === AI_CHARGE && e.aiState === 1) || ((e.def.ai === AI_BOSS_ANT || e.def.ai === AI_BOSS_BEETLE) && e.aiState === 2)) {
       tint = 'rgba(255,32,32,0.6)';
       ox = (Math.random() - 0.5) * 6;
-    } else if (e.slowTime > 0) tint = 'rgba(128,216,255,0.47)';
+    } else if (e.freeze > 0) tint = 'rgba(180,235,255,0.8)';
+    else if (e.fear > 0) tint = 'rgba(230,230,180,0.5)';
+    else if (e.acid > 0) tint = 'rgba(200,255,60,0.45)';
+    else if (e.slowTime > 0) tint = 'rgba(128,216,255,0.47)';
     else if (e.burnTime > 0) tint = 'rgba(255,106,0,0.53)';
     else if (e.elite) tint = 'rgba(255,196,0,0.33)';
     else if (inferno) tint = 'rgba(220,30,0,0.3)';
@@ -1317,6 +1412,8 @@ class Ui {
     }
     ctx.restore();
     if (e.elite) this.emoji('👑', e.x, e.y - e.radius * 1.2, 30);
+    if (e.fear > 0 && !e.def.boss) this.emoji('😱', e.x + e.radius * 0.7, e.y - e.radius, 18);
+    else if (e.freeze > 0) this.emoji('🧊', e.x + e.radius * 0.7, e.y - e.radius, 18);
     if (!e.def.boss && e.hp < e.maxHp) {
       const w = e.radius * 1.6, y = e.y - e.radius * (e.elite ? 1.6 : 1.25);
       ctx.fillStyle = 'rgba(0,0,0,0.67)';
@@ -1330,7 +1427,8 @@ class Ui {
     const g = this.game;
     if (p.iframes > 0.15 && g.waveTime > 1 && Math.floor(p.iframes * 20) % 2 === 0) return;
     const bob = p.moving ? Math.sin(p.moveAnim) * 0.07 : Math.sin(this.time * 3) * 0.03;
-    this.drawHero(p.character, p.x, p.y, 68, { facingLeft: p.facingLeft, lookX: p.lookX, lookY: p.lookY, bob, moving: p.moving });
+    const size = 68 * (p.kind === 'grow' ? 1 + (p.growth || 0) * 0.5 : 1); // Brócolis cresce
+    this.drawHero(p.character, p.x, p.y, size, { facingLeft: p.facingLeft, lookX: p.lookX, lookY: p.lookY, bob, moving: p.moving });
   }
 
   /** Jogador que caiu (multiplayer): fantasminha transparente até a próxima onda. */
@@ -1422,6 +1520,7 @@ class Ui {
     this.text(String(left), vw / 2, 96, 56, left <= 5 ? '#FF6A5A' : '#FFFFFF', 'center');
     }
 
+    if (g.pvp !== 'duel' || p.kind !== 'laser') this.drawClassHud(p);
     this.button(vw - 86, 16, 68, 68, 'II', 'PAUSE', 0, 'rgba(51,51,51,0.67)', true, 30);
     if (g.coop && this.mp.isGuest() && g.pvp !== 'prep') {
       // ping: tempo de ida e volta até o dono da sala
@@ -1657,6 +1756,7 @@ class Ui {
         if (o.weapon) this.text(TYPE_NAMES[o.weapon.type], x + 86, y + 64, 16, '#B0B0B0', 'left');
       }
       let ly = this.wrapped(offerName(o), x + 14, y + 112, cw - 28, 23, TIER_COLOR[tier], 'left') + 6;
+      ly += this.drawOfferTags(o, x + 12, ly - 22, cw - 24);
       if (o.weapon) {
         this.weaponStats(new Weapon(o.weapon, o.tier), x + 14, ly, cw - 28, !narrow);
       } else {
@@ -1786,6 +1886,7 @@ class Ui {
   drawItemsGrid(x, y, w, h) {
     const p = this.game.player;
     this.text('Itens (' + p.items.length + ')', x, y - 10, 22, '#FFFFFF', 'left');
+    this.drawActiveSets(x + this.measure('Itens (' + p.items.length + ')', 22) + 16, y - 10, w - 140);
     const counts = new Map();
     for (const it of p.items) counts.set(it, (counts.get(it) || 0) + 1);
     const s = 50;
@@ -1809,6 +1910,7 @@ class Ui {
     const lines = [[it.name, TIER_COLOR[it.tier]]];
     for (let m = 0; m < it.mods.length; m += 2) lines.push([Stat.format(it.mods[m], it.mods[m + 1]), it.mods[m + 1] >= 0 ? '#8CF08C' : '#FF8080']);
     if (it.specialText) lines.push([it.specialText, '#FFE08A']);
+    if (it.tags && it.tags.length) lines.push(['Conjunto: ' + it.tags.map((t) => SETS[t].icon + ' ' + SETS[t].name).join(', '), '#9FE8FF']);
     const w = Math.max(...lines.map((l) => this.measure(l[0], 18))) + 24;
     const h = lines.length * 24 + 14;
     if (y + h > VH) y -= h + 62;
@@ -1874,13 +1976,18 @@ class Ui {
       const rx = cx + 40, ry = 200;
       this.text('Dano das armas', rx, ry, 26, C.GOLD, 'left');
       const best = Math.max(1, ...p.weapons.map((w) => w.totalDamage));
-      p.weapons.forEach((w, i) => {
-        const y = ry + 22 + i * 46;
-        this.emoji(w.def.icon, rx + 18, y + 18, 34);
-        this.roundRect(rx + 44, y + 6, 300, 24, 8, 'rgba(0,0,0,0.33)');
-        if (w.totalDamage > 0) this.roundRect(rx + 44, y + 6, Math.max(8, 300 * w.totalDamage / best), 24, 8, TIER_COLOR[w.tier]);
-        this.text(shortNum(w.totalDamage), rx + 352, y + 27, 20, '#FFFFFF', 'left');
+      p.weapons.slice(0, 6).forEach((w, i) => {
+        const y = ry + 16 + i * 36;
+        this.emoji(w.def.icon, rx + 18, y + 16, 28);
+        this.roundRect(rx + 44, y + 6, 300, 22, 8, 'rgba(0,0,0,0.33)');
+        if (w.totalDamage > 0) this.roundRect(rx + 44, y + 6, Math.max(8, 300 * w.totalDamage / best), 22, 8, TIER_COLOR[w.tier]);
+        this.text(shortNum(w.totalDamage), rx + 352, y + 25, 19, '#FFFFFF', 'left');
       });
+      if (!g.coop) this.drawEndAchievements(rx, 452, 400);
+      if (g.daily) {
+        this.text('📅 Desafio do Dia (' + g.daily.date.split('-').reverse().join('/') + ')', lx, 524, 20, '#FFC870', 'center');
+        this.textFit('Regra: ' + g.daily.mod.text, lx, 552, 17, 440, '#E8F5D0');
+      }
     }
     if (this.newUnlocks) {
       this.ctx.globalAlpha = 0.75 + 0.25 * Math.sin(this.time * 5);

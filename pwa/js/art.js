@@ -251,6 +251,83 @@ const Art = {
           ctx.globalAlpha = a0;
         }
         break;
+      // --- versão 4.0 ---
+      case 'boomerang': // bumerangues pequenos girando
+        orbit(2, 44, 16, 2.6, (x, y, i, a) => {
+          ctx.save(); ctx.translate(x, y + 6); ctx.rotate(a * 4);
+          ctx.strokeStyle = '#FBC02D'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.moveTo(-5, 3); ctx.lineTo(0, -3); ctx.lineTo(5, 3); ctx.stroke();
+          ctx.restore();
+        });
+        break;
+      case 'acid': // gotas de suco ácido borbulhando
+        rise(6, 26, 46, 0.7, (x, y, i, u) => {
+          dot(x, y, 2.8 - u, i % 2 ? '#D4E157' : '#F4FF81');
+          if (i % 3 === 0) { ctx.strokeStyle = 'rgba(220,240,120,0.8)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x + 4, y - 3, 2.2, 0, Math.PI * 2); ctx.stroke(); }
+        });
+        break;
+      case 'twin': // dois coraçõezinhos gêmeos girando juntos
+        orbit(2, 40, 14, 2.2, (x, y) => {
+          ctx.fillStyle = '#FF4D6D';
+          for (const dx of [-3, 3]) { ctx.beginPath(); ctx.arc(x + dx, y + 6, 2.6, 0, Math.PI * 2); ctx.fill(); }
+          ctx.beginPath(); ctx.moveTo(x - 5.6, y + 7); ctx.lineTo(x, y + 12); ctx.lineTo(x + 5.6, y + 7); ctx.fill();
+        });
+        break;
+      case 'grape': // uvinhas fantasma piscando
+        twinkle(5, 40, 2.4, (x, y, i, v) => { dot(x, y, 4, 'rgba(171,71,188,' + (0.35 + 0.4 * v).toFixed(2) + ')'); dot(x - 1.2, y - 1.2, 1.3, 'rgba(255,255,255,0.7)'); });
+        break;
+      case 'pit': // anel de energia do escudo
+        orbit(6, 40, 14, 1.2, (x, y) => { dot(x, y + 8, 2.6, '#9CCC65'); dot(x, y + 8, 1.2, '#F1F8E9'); });
+        break;
+      case 'garlic': // bafo esverdeado subindo
+        rise(5, 28, 60, 0.45, (x, y, i, u) => dot(x, y, 3 + u * 5, 'rgba(178,210,150,' + (0.55 - u * 0.4).toFixed(2) + ')'));
+        break;
+      case 'grow': // folhinhas e setas pra cima
+        rise(4, 26, 60, 0.5, (x, y, i) => {
+          if (i % 2) { ctx.fillStyle = '#66BB6A'; ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x + 4, y + 1); ctx.lineTo(x - 4, y + 1); ctx.fill(); }
+          else { ctx.fillStyle = '#9CCC65'; ctx.beginPath(); ctx.ellipse(x, y, 4, 2, -0.6, 0, Math.PI * 2); ctx.fill(); }
+        });
+        break;
+      case 'wind': // risquinhos de vento girando
+        orbit(4, 46, 16, 4, (x, y, i, a) => {
+          ctx.strokeStyle = 'rgba(200,255,220,0.85)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+          ctx.beginPath(); ctx.arc(x, y + 6, 6, a, a + 1.6); ctx.stroke();
+        });
+        break;
+      case 'dice': // dadinhos girando
+        orbit(2, 44, 16, 1.8, (x, y, i, a) => {
+          ctx.save(); ctx.translate(x, y + 6); ctx.rotate(a * 2);
+          ctx.fillStyle = '#FFFFFF'; ctx.fillRect(-4, -4, 8, 8);
+          ctx.fillStyle = '#D32F2F'; ctx.beginPath(); ctx.arc(0, 0, 1.4, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        });
+        break;
+      case 'bank': // moedinhas douradas pulando
+        rise(4, 26, 52, 0.6, (x, y) => { dot(x, y, 3.6, '#FFC107'); dot(x, y, 2, '#FFE082'); });
+        break;
+      case 'phoenix': // chamas e penas de fogo
+        rise(6, 26, 64, 0.9, (x, y, i, u) => this.flame(x, y + 4, 3 - u * 1.5, 9 - u * 4));
+        break;
+      case 'squeeze': // gotinhas de suco de laranja espirrando
+        twinkle(6, 42, 5, (x, y, i, v) => dot(x, y, 1.8 + v * 2, i % 2 ? '#FFA726' : '#FFCC80'));
+        break;
+      case 'gravity': // pedrinhas sendo puxadas em espiral
+        orbit(5, 46, 18, 2.8, (x, y, i, a) => {
+          const k = 0.6 + 0.4 * Math.sin(a * 0.5 + i);
+          dot(x * k, y * k + 6, 2.4, i % 2 ? '#5E35B1' : '#9575CD');
+        });
+        break;
+      case 'mirror': // brilhos de vidro
+        twinkle(6, 42, 3.5, (x, y, i, v) => this.sparkle(x, y, 2.5 + v * 3.5, i % 2 ? '#E0F7FA' : '#B2EBF2'));
+        break;
+      case 'elements': { // fogo, gelo e raio em órbita
+        const cols = ['#FF7043', '#81D4FA', '#FFEE58'];
+        orbit(3, 44, 16, 2.2, (x, y, i) => {
+          if (i === 1) this.sparkle(x, y + 6, 4.5, cols[i]);
+          else dot(x, y + 6, 3.4, cols[i]);
+        });
+        break;
+      }
     }
   },
 
@@ -587,6 +664,22 @@ const Art = {
   drawBullet(b) {
     const ctx = this.ctx, d = b.wd;
     const ang = Math.atan2(b.vy, b.vx);
+    if (b.boom) { // Banana: bumerangue girando
+      ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(this.time * 18 + b.x * 0.01);
+      if (b.echo) ctx.globalAlpha = 0.6;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#6D4C00'; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(-10, 7); ctx.lineTo(0, -5); ctx.lineTo(10, 7); ctx.stroke();
+      ctx.strokeStyle = '#FFD54F'; ctx.lineWidth = 5; ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    if (b.mirror) { // Pera: tiro refletido
+      const g = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, 14);
+      g.addColorStop(0, '#FFFFFF'); g.addColorStop(0.45, '#80DEEA'); g.addColorStop(1, 'rgba(128,222,234,0)');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, 14, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
     if (b.minion) {
       const g = ctx.createRadialGradient(b.x, b.y, 1, b.x, b.y, 10);
       g.addColorStop(0, '#FFFFFF'); g.addColorStop(0.4, '#7C8CFF'); g.addColorStop(1, 'rgba(90,107,255,0)');
@@ -600,6 +693,7 @@ const Art = {
       ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 3; ctx.stroke();
       return;
     }
+    if (b.echo) ctx.globalAlpha = 0.55; // Cereja: o eco é meio transparente
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(ang);
@@ -648,6 +742,7 @@ const Art = {
         this.circle(0, 0, b.radius, b.explosion > 0 ? '#FF7A2A' : '#FFF3C4');
     }
     ctx.restore();
+    ctx.globalAlpha = 1;
   },
 
   // ------------------------------------------------------------------
@@ -717,6 +812,76 @@ const Art = {
     }
     void camX; void camY;
   },
+};
+
+
+/** Coisas das classes novas que ficam no chão ou em volta do jogador (desenhadas antes dos insetos). */
+Art.drawAbilityGround = function () {
+  const ctx = this.ctx, g = this.game, t = this.time;
+  for (const p of g.players) {
+    if (!p.alive) continue;
+    if (p.kind === 'aura') { // Limão: aura ácida
+      const r = g.auraRadius(p);
+      const gr = ctx.createRadialGradient(p.x, p.y, r * 0.3, p.x, p.y, r);
+      gr.addColorStop(0, 'rgba(212,255,74,0)'); gr.addColorStop(0.85, 'rgba(212,255,74,0.13)'); gr.addColorStop(1, 'rgba(212,255,74,0.28)');
+      ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(220,255,90,0.5)'; ctx.lineWidth = 2; ctx.setLineDash([10, 12]); ctx.lineDashOffset = -t * 30;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
+  for (const wl of g.wells) { // Azeitona: buraco negro
+    const k = Math.max(0, wl.t / 2), r = 40 + (1 - k) * 20;
+    for (let i = 0; i < 3; i++) {
+      ctx.strokeStyle = `rgba(149,117,205,${0.25 + 0.2 * i})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(wl.x, wl.y, r + 70 - ((t * 120 + i * 30) % 90), 0, Math.PI * 2); ctx.stroke();
+    }
+    const gr = ctx.createRadialGradient(wl.x, wl.y, 4, wl.x, wl.y, r);
+    gr.addColorStop(0, '#000000'); gr.addColorStop(0.6, '#1A0B33'); gr.addColorStop(1, 'rgba(94,53,177,0)');
+    ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(wl.x, wl.y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const dc of g.decoys) { // Uva: uva falsa (pisca mais rápido perto de explodir)
+    const blink = Math.sin(t * (6 + (4 - dc.t) * 6)) > 0;
+    this.circle(dc.x, dc.y + 14, 16, 'rgba(0,0,0,0.25)');
+    this.circle(dc.x, dc.y, 30, blink ? 'rgba(206,147,216,0.35)' : 'rgba(206,147,216,0.15)');
+    ctx.globalAlpha = 0.85;
+    this.emoji('🍇', dc.x, dc.y + Math.sin(t * 5) * 3, 46);
+    ctx.globalAlpha = 1;
+    this.text(String(Math.ceil(dc.t)), dc.x, dc.y - 30, 20, blink ? '#FF8A80' : '#FFFFFF', 'center');
+  }
+};
+
+/** Efeitos em cima do jogador (escudo, espelho, dash, elemento). */
+Art.drawAbilityOver = function (p) {
+  const ctx = this.ctx, g = this.game, t = this.time;
+  const r = (p.radius || 26) + 12;
+  if (p.kind === 'barrier' && p.shieldCd <= 0) { // Abacate: bolha de escudo pronta
+    ctx.strokeStyle = `rgba(156,204,101,${0.6 + 0.3 * Math.sin(t * 5)})`; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r + 4, 0, Math.PI * 2); ctx.stroke();
+    this.circle(p.x, p.y, r + 4, 'rgba(156,204,101,0.12)');
+  }
+  if (p.kind === 'mirror' && !(p.mirrorCd > 0)) { // Pera: espelho pronto
+    ctx.strokeStyle = 'rgba(178,235,242,0.55)'; ctx.lineWidth = 3;
+    for (let i = 0; i < 6; i++) {
+      const a = t * 1.5 + i * Math.PI / 3;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r + 10, a, a + 0.6); ctx.stroke();
+    }
+  }
+  if (p.kind === 'dash' && p.dashT > 0) { // Alface: rastro de vento
+    for (let i = 1; i <= 4; i++) {
+      ctx.globalAlpha = 0.35 - i * 0.07;
+      this.emoji(p.character.icon, p.x - p.dashX * i * 22, p.y - p.dashY * i * 22, 60);
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (p.kind === 'elements') { // Manga: elemento atual
+    const el = g.elementOf(p);
+    this.emoji(['🔥', '❄️', '⚡'][el], p.x + 28, p.y - 34, 24);
+  }
+  if (p.kind === 'phoenix' && p.revive) this.emoji('🪶', p.x - 30, p.y - 30, 18);
+  if (p.kind === 'berserk' && p.hp < p.maxHp() * 0.5) {
+    const a = 0.25 + 0.25 * Math.sin(t * 10);
+    this.circle(p.x, p.y, r, `rgba(255,112,67,${a.toFixed(2)})`);
+  }
 };
 
 if (typeof Ui !== 'undefined') Object.assign(Ui.prototype, Art);

@@ -20,8 +20,13 @@ const Ranking = {
    * Os 20 melhores de uma dificuldade, do maior para o menor.
    * Cada jogador aparece uma vez só (a melhor partida dele), mesmo que existam registros antigos repetidos.
    */
-  async top(diff) {
-    const res = await fetch(`${RANKING_URL}/d${diff}.json?orderBy=%22score%22&limitToLast=80`, { cache: 'no-store' });
+  async top(diff) { return this.topAt(`${RANKING_URL}/d${diff}`); },
+
+  /** Ranking do Desafio do Dia (date = AAAA-MM-DD). */
+  dailyUrl(date) { return RANKING_URL.replace(/\/ranking$/, '/daily/') + date; },
+
+  async topAt(base) {
+    const res = await fetch(`${base}.json?orderBy=%22score%22&limitToLast=80`, { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = (await res.json()) || {};
     const seen = new Set();
@@ -43,8 +48,26 @@ const Ranking = {
    * Ordem: vitória > onda > insetos derrotados (se o resto empatar, quem matou mais fica).
    * Devolve {posted: true} ou {posted: false, best} (a anterior era melhor ou igual).
    */
-  async postBest(diff, playerId, entry) {
-    const url = `${RANKING_URL}/d${diff}/${playerId}.json`;
+  async postBest(diff, playerId, entry) { return this.postBestAt(`${RANKING_URL}/d${diff}`, playerId, entry); },
+
+  /** Build compacta (armas e itens) pra mostrar no ranking: "arma.nível,..|item*qtd,..". */
+  buildOf(p) {
+    const counts = new Map();
+    for (const it of p.items) counts.set(it, (counts.get(it) || 0) + 1);
+    const items = [...counts].map(([it, n]) => ALL_ITEMS.indexOf(it) + (n > 1 ? '*' + n : ''));
+    return (p.weapons.map((w) => ALL_WEAPONS.indexOf(w.def) + '.' + w.tier).join(',') + '|' + items.join(',')).slice(0, 900);
+  },
+
+  parseBuild(b) {
+    if (typeof b !== 'string') return null;
+    const [ws, is] = b.split('|');
+    const weapons = (ws || '').split(',').filter(Boolean).map((x) => { const [i, t] = x.split('.'); return { def: ALL_WEAPONS[+i], tier: +t || 0 }; }).filter((w) => w.def);
+    const items = (is || '').split(',').filter(Boolean).map((x) => { const [i, n] = x.split('*'); return { it: ALL_ITEMS[+i], n: +n || 1 }; }).filter((x) => x.it);
+    return { weapons, items };
+  },
+
+  async postBestAt(base, playerId, entry) {
+    const url = `${base}/${playerId}.json`;
     const score = this.scoreOf(entry.won, entry.wave, entry.kills);
     const cur = await fetch(url, { cache: 'no-store' });
     if (!cur.ok) { const e = new Error('HTTP ' + cur.status); e.status = cur.status; throw e; }

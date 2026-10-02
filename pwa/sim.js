@@ -34,6 +34,7 @@ function bot(g, p) {
     fx += dx / Math.sqrt(d2) * w; fy += dy / Math.sqrt(d2) * w;
   }
   fx += (WORLD_W / 2 - p.x) / 900; fy += (WORLD_H / 2 - p.y) / 900;
+  if (p.kind === 'dash' && danger > 1.5) { if (p === g.player) g.input.dash = true; else g.tryDash(p); }
   // Cyborg: mira manual no inseto mais perto e atira se estiver no alcance
   if (p.kind === 'laser') {
     const st = g.laserStats(p);
