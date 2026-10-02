@@ -114,7 +114,7 @@ class Ui {
     this.lastState = null;
     // Ranking online
     this.rank = { diff: this.difficulty, loading: false, error: '', entries: null, myId: null };
-    this.submitState = ''; // '', 'sending' ou 'sent'
+    this.rankPost = null;  // ranking automático no fim da partida
     this.mp = null;        // multiplayer (criado no main.js)
     this.mpMenu = false;   // menu aberto durante uma partida multiplayer (o jogo não pausa)
     this.cam = { x: 0, y: 0 };
@@ -195,30 +195,56 @@ class Ui {
     });
   }
 
-  /** Pergunta o nome e envia a partida que acabou de terminar. */
-  submitScore() {
+  /**
+   * Fim de partida solo: posta no ranking automaticamente, mas só fica a MELHOR partida do jogador
+   * em cada dificuldade (a anterior é substituída). Se ainda não tem nome, pergunta uma vez.
+   */
+  autoPost() {
     const g = this.game, p = g.player;
-    if (!p || this.submitState) return;
-    askName(this.prefs.data.playerName || '', (name) => {
-      this.prefs.data.playerName = name;
-      this.prefs.save();
-      this.submitState = 'sending';
-      const diff = g.difficulty;
-      Ranking.submit(diff, {
-        name, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY',
-        kills: g.kills, level: p.level, platform: IS_APP ? 'android' : 'web',
-      }).then((id) => {
-        this.submitState = 'sent';
-        this.rank.myId = id;
-        return Ranking.top(diff).then((list) => {
+    if (!p || g.coop) return;
+    const info = { diff: g.difficulty, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY', kills: g.kills, level: p.level };
+    const go = (name) => {
+      this.rankPost = { status: 'sending' };
+      const id = this.account.rankId();
+      this.rank.myId = id;
+      Ranking.postBest(info.diff, id, {
+        name, character: info.character, wave: info.wave, won: info.won, kills: info.kills, level: info.level,
+        platform: IS_APP ? 'android' : 'web',
+      }).then((r) => {
+        if (!r.posted) {
+          this.rankPost = { status: 'kept', best: r.best };
+          return null;
+        }
+        this.rankPost = { status: 'new', first: !r.best };
+        return Ranking.top(info.diff).then((list) => {
           const pos = list.findIndex((e) => e.id === id);
-          this.showToast(pos >= 0 ? 'Enviado! Você está em ' + (pos + 1) + 'º lugar no ' + DIFF_NAMES[diff] + '!' : 'Enviado pro ranking!');
-        }, () => this.showToast('Enviado pro ranking!'));
-      }).catch(() => {
-        this.submitState = '';
-        this.showToast(navigator.onLine === false ? 'Sem internet: não deu pra enviar.' : 'Não deu pra enviar. Tente de novo.');
+          if (pos >= 0) this.rankPost.pos = pos + 1;
+        }, () => {});
+      }).catch((e) => {
+        this.rankPost = { status: 'error', msg: e && e.status === 401 ? 'faltam as regras novas do Firebase' : navigator.onLine === false ? 'sem internet' : 'não deu pra falar com o servidor' };
       });
+    };
+    const name = this.prefs.data.playerName;
+    if (name && Ranking.validName(name)) { go(name); return; }
+    this.rankPost = { status: 'name' };
+    askName('', (n) => { this.prefs.data.playerName = n; this.prefs.save(); go(n); }, () => {
+      const n = 'Legume' + Math.floor(1000 + Math.random() * 9000);
+      this.prefs.data.playerName = n; this.prefs.save(); go(n);
     });
+  }
+
+  /** Texto do ranking no fim da partida. */
+  rankPostText() {
+    const r = this.rankPost || {};
+    const d = DIFF_NAMES[this.game.difficulty];
+    switch (r.status) {
+      case 'sending': return ['🏆 Postando no ranking...', '#FFE678'];
+      case 'name': return ['🏆 Escolha seu nome pro ranking', '#FFE678'];
+      case 'new': return [r.pos ? '🏆 Novo recorde! ' + r.pos + 'º no ' + d : '🏆 Novo recorde no ' + d + '!', C.GOLD];
+      case 'kept': return ['🏆 Seu recorde no ' + d + ' continua: ' + (r.best.won ? 'vitória' : 'onda ' + r.best.wave) + ', ' + r.best.kills + ' insetos', '#CFE3B8'];
+      case 'error': return ['🏆 Ranking: ' + r.msg, '#FF9A8A'];
+      default: return ['', '#FFFFFF'];
+    }
   }
 
   unlockedChars() { return CHARS.map((c) => isUnlocked(c, this.prefs.data)); }
@@ -231,6 +257,8 @@ class Ui {
     void wave;
     const after = this.unlockedChars();
     this.newUnlocks = CHARS.filter((c, i) => !before[i] && after[i]).map((c) => c.name).join(', ');
+    this.rankPost = null;
+    if (!g.coop) this.autoPost();
   }
 
   saveIfPossible() { if (this.game.state === 'SHOP') this.prefs.saveRun(this.game.saveToString()); }
@@ -417,7 +445,6 @@ class Ui {
           else if (code === 'Escape') this.doAction('QUIT');
         } else if (ok) this.doAction('AGAIN');
         else if (code === 'Escape') this.doAction('MENU');
-        else if (code === 'KeyE') this.doAction('SUBMIT');
         break;
     }
   }
@@ -484,7 +511,6 @@ class Ui {
       case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length); break;
       case 'RANK_TAB': this.loadRanking(arg); break;
       case 'RANK_REFRESH': this.loadRanking(this.rank.diff); break;
-      case 'SUBMIT': this.submitScore(); break;
       case 'ITEM':
         if (this.tipItem === arg && this.tipTime > 0) this.tipTime = 0;
         else { this.tipItem = arg; this.tipTime = 3; }
@@ -585,7 +611,6 @@ class Ui {
     if (this.game.state !== this.lastState) {
       if (this.game.state === 'SHOP' && !this.game.coop) this.prefs.saveRun(this.game.saveToString());
       if (this.game.state !== 'PLAYING') this.mpMenu = false;
-      if (this.game.state === 'GAME_OVER' || this.game.state === 'VICTORY') this.submitState = '';
       this.lastState = this.game.state;
     }
     ctx.save();
@@ -1859,7 +1884,7 @@ class Ui {
     }
     if (this.newUnlocks) {
       this.ctx.globalAlpha = 0.75 + 0.25 * Math.sin(this.time * 5);
-      this.text('🔓 Novo personagem liberado: ' + this.newUnlocks + '!', cx, VH - 150, 28, C.GOLD, 'center');
+      this.textFit('🔓 ' + (this.newUnlocks.includes(',') ? 'Novos personagens liberados: ' : 'Novo personagem liberado: ') + this.newUnlocks + '!', cx, VH - 150, 28, this.vw - 40, C.GOLD);
       this.ctx.globalAlpha = 1;
     }
     if (g.coop) {
@@ -1877,8 +1902,11 @@ class Ui {
     }
     const bw = Math.min(330, (this.vw - 100) / 3), gap = 20, bx = cx - (bw * 3 + gap * 2) / 2;
     this.button(bx, VH - 120, bw, 84, 'Jogar de novo', 'AGAIN', 0, C.GREEN, true, 32);
-    const label = this.submitState === 'sending' ? 'Enviando...' : this.submitState === 'sent' ? 'Enviado ✔' : '🏆 Enviar pro ranking';
-    this.button(bx + bw + gap, VH - 120, bw, 84, label + (this.submitState || this.touch ? '' : ' (E)'), 'SUBMIT', 0, '#B8860B', !this.submitState, 30);
+    const [rt, rc] = this.rankPostText();
+    if (rt) {
+      this.roundRect(bx + bw + gap, VH - 116, bw, 76, 16, 'rgba(0,0,0,0.45)', 'rgba(255,216,74,0.5)', 2);
+      this.wrapped(rt, bx + bw + gap + bw / 2, VH - 86, bw - 24, 20, rc, 'center');
+    }
     this.button(bx + (bw + gap) * 2, VH - 120, bw, 84, 'Menu', 'MENU', 0, C.GRAY, true, 32);
   }
 
@@ -2131,16 +2159,16 @@ function openForm(o, onOk) {
 /** Uma pergunta de texto só (nome, código da sala...). */
 function askText(o, onOk) {
   openForm({
-    title: o.title, submit: o.submit,
+    title: o.title, submit: o.submit, onCancel: o.onCancel,
     fields: [{ id: 'v', label: o.label, value: o.initial || '', maxLength: o.maxLength || 16, upper: o.upper, clean: o.clean }],
     check: (v) => (o.check ? o.check(v.v) : ''),
   }, (v) => onOk(v.v));
 }
 
-/** Nome para o ranking. */
-function askName(initial, onOk) {
-  askText({
-    title: '🏆 Enviar pro ranking', label: 'Seu nome (aparece pra todo mundo):', submit: 'Enviar', initial, maxLength: 16,
+/** Nome para o ranking. onCancel (opcional): chamado se a pessoa cancelar. */
+function askName(initial, onOk, onCancel) {
+  askText({ onCancel,
+    title: '🏆 Seu nome no ranking', label: 'Seu nome (aparece pra todo mundo). A sua melhor partida é postada sozinha:', submit: 'OK', initial, maxLength: 16,
     clean: (v) => v.replace(/\s+/g, ' ').trim(),
     check: (v) => (Ranking.validName(v) ? '' : 'Use de 2 a 16 letras ou números (sem < > & { } " \\).'),
   }, onOk);

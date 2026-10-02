@@ -177,7 +177,17 @@ class Account {
 
   /** Quem está votando: a conta, ou um código aleatório deste aparelho. */
   voterId() {
-    if (this.user) return 'u' + this.user.key.slice(0, 31);
+    if (this.user) return 'u' + sha256('voto|' + this.user.key).slice(0, 31);
+    return this.deviceId();
+  }
+
+  /** Lugar do jogador no ranking: o da conta (vale em qualquer aparelho) ou o deste aparelho. */
+  rankId() {
+    if (this.user) return 'a' + sha256('ranking|' + this.user.key).slice(0, 24);
+    return this.deviceId();
+  }
+
+  deviceId() {
     let id = '';
     try { id = localStorage.getItem('horta_votante') || ''; } catch (e) { /* ignora */ }
     if (!/^d[a-z0-9]{15}$/.test(id)) {

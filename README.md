@@ -118,7 +118,10 @@ bloquear a conexão direta (a sala mostra "direto ⚡" ou "via servidor 🌐", e
 
 Tudo fica no **Firebase Realtime Database** (plano gratuito), acessado pela API REST sem bibliotecas.
 
-- **Ranking:** os 20 melhores de cada dificuldade (site e app juntos). No fim da partida, *Enviar pro ranking*.
+- **Ranking:** os 20 melhores de cada dificuldade (site e app juntos). É **automático**: no fim de cada partida
+  solo, se ela for a sua melhor naquela dificuldade, ela entra no lugar da anterior (cada jogador aparece uma vez
+  só). Ordem: quem venceu, depois a onda alcançada e, se empatar, quem derrotou mais insetos. Com conta, o seu lugar
+  no ranking é o mesmo em qualquer aparelho.
 - **Contas:** nome + senha, sem e-mail. O progresso (recordes, personagens liberados, partida salva) é guardado
   num endereço calculado a partir do nome e da senha (SHA-256), então só quem sabe a senha consegue ler ou mudar.
   Ao entrar num aparelho, o progresso dele e o da conta são juntados (fica o melhor de cada). Não dá pra recuperar

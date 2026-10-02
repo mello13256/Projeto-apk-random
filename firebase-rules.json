@@ -9,7 +9,7 @@
           "score"
         ],
         "$id": {
-          ".write": "$diff.matches(/^d[0-5]$/) && !data.exists() && newData.exists()",
+          ".write": "$diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val())",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
