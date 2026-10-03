@@ -11,6 +11,9 @@ const Stat = {
   ICONS: ['❤️', '💚', '🦇', '💪', '👊', '🎯', '🔥', '⚡', '💥', '🔭', '🛡️', '🍃', '👟', '🍀', '🌾'],
   PERCENT: [false, false, true, true, false, false, false, true, true, false, false, true, true, false, false],
   LEVEL_UP_BASE: [3, 2, 1, 5, 2, 1, 1, 5, 3, 15, 1, 3, 3, 5, 5],
+  // Limites: acima disso o atributo não ajuda mais (evita legume imortal).
+  // Regeneração 25 = 3 de vida por segundo; Armadura 30 = 67% menos dano.
+  CAP: [0, 25, 30, 0, 0, 0, 0, 0, 0, 0, 30, 50, 100, 0, 0],
   format(stat, value) {
     return (value >= 0 ? '+' : '') + value + (Stat.PERCENT[stat] ? '% ' : ' ') + Stat.NAMES[stat];
   },
@@ -72,6 +75,8 @@ const ALL_WEAPONS = WEAPONS.concat([W_LASER]);
 // Efeitos especiais dos itens
 const SP_MAGNET = 0, SP_BOOM = 1, SP_THORNS = 2, SP_CRATE = 3, SP_FRUIT = 4;
 const SP_EXECUTE = 5, SP_SHIELD = 6, SP_FREEZE = 7, SP_COUNT = 8; // novos na 4.0
+// limites dos efeitos especiais (acima disso não ajuda mais)
+const SP_CAP_FREEZE = 30, SP_CAP_EXECUTE = 20, SP_CAP_SHIELD = 60;
 function item(name, icon, tier, ...mods) { return { name, icon, tier, mods, special: -1, specialValue: 0, specialText: '' }; }
 function sp(it, special, value, text) { return Object.assign(it, { special, specialValue: value, specialText: text }); }
 const S = Stat;
@@ -368,9 +373,10 @@ const DIFF_DESC = [
   'A dificuldade máxima: 35 ondas numa horta em chamas.',
   'Pesadelo sem fim: até onde você chega?',
 ];
-const DIFF_HP = [0.6, 1.15, 1.4, 1.7, 2.0, 1.7];
-const DIFF_DMG = [0.6, 1.15, 1.45, 1.8, 2.1, 1.8];
-const DIFF_SPAWN = [1.15, 1, 0.9, 0.8, 0.72, 0.8];
+// Versão 4.1: tudo 2x mais difícil (insetos com ~40% mais vida, ~40% mais dano e 10% mais insetos)
+const DIFF_HP = [0.84, 1.6, 1.95, 2.4, 2.8, 2.4];
+const DIFF_DMG = [0.84, 1.6, 2.0, 2.5, 2.95, 2.5];
+const DIFF_SPAWN = [1.04, 0.9, 0.81, 0.72, 0.65, 0.72];
 const DIFF_WAVES = [20, 20, 20, 20, 35, 0]; // 0 = infinito
 const DIFF_INFERNO = 4, DIFF_ENDLESS = 5;
 

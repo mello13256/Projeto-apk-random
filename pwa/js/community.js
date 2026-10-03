@@ -50,7 +50,7 @@ function sha256(str) {
   return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-const GAME_VERSION = '4.0';
+const GAME_VERSION = '4.1';
 const PROGRESS_KEYS = ['bestWave', 'wins', 'totalKills', 'bestDiffWon', 'gamesPlayed', 'totalSeeds', 'bestEndless',
   'bossKills', 'eliteKills', 'itemsBought', 'dailyDays'];
 

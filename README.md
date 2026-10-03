@@ -22,6 +22,25 @@ O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ n
 Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
 depois da primeira visita.
 
+## 🆕 Versão 4.1: mais difícil e sem legume imortal
+
+- **Todas as dificuldades ficaram 2x mais difíceis:** os insetos têm cerca de 40% mais vida, dão 40% mais dano
+  e aparecem 10% mais (vale para o Desafio do Dia, o multiplayer e o Infinito também).
+- **Limites de atributos**, para nenhuma build deixar o legume imortal. Passando do limite, o atributo não ajuda
+  mais: no painel ele aparece em amarelo com **MÁX**, a loja avisa "(já no máx.)" e a subida de nível não oferece
+  mais esse atributo.
+
+| Atributo / efeito | Limite |
+|---|---|
+| 🍃 Esquiva | 50% |
+| 🛡️ Armadura | 30 (67% menos dano) |
+| 💚 Regeneração | 25 (3 de vida por segundo) |
+| 🦇 Roubo de vida | 30% e no máximo 1 de vida a cada 0,15 s |
+| 👟 Velocidade | +100% |
+| ❄️ Chance de congelar | 30%, e o inseto fica 1,5 s sem poder congelar de novo |
+| ⚖️ Executar | insetos com até 20% da vida |
+| 🥚 Casca de Ovo (escudo) | 60 de dano absorvido por onda |
+
 ## 🆕 Novidades da versão 4.0
 
 - **📅 Desafio do Dia:** todo dia um desafio novo, igual para todo mundo: o mesmo legume, a mesma dificuldade,

@@ -1,5 +1,5 @@
 // Service worker: guarda os arquivos do jogo para funcionar sem internet.
-const CACHE = 'horta-hostil-v16';
+const CACHE = 'horta-hostil-v17';
 const FILES = [
   './', 'index.html', 'manifest.webmanifest',
   'js/data.js', 'js/game.js', 'js/sfx.js', 'js/net.js', 'js/ranking.js', 'js/mp.js', 'js/ui.js', 'js/art.js', 'js/community.js', 'js/meta.js', 'js/main.js',

@@ -141,7 +141,9 @@ class Player {
   maxHp() { return Math.max(1, this.stats[Stat.HP]) * (this.hpMult || 1); }
   /** Modificador da roleta do Pêssego (1 = nenhum). */
   rmod(k) { const r = this.roulette >= 0 ? ROULETTE[this.roulette] : null; return r && r[k] ? r[k] : 1; }
-  speed() { return 240 * Math.max(0.3, 1 + this.stats[Stat.SPEED] / 100) * this.rmod('speed') * (this.dashT > 0 ? 4 : 1); }
+  /** Valor do atributo que vale de verdade (respeita o limite de Stat.CAP). */
+  stat(i) { const c = Stat.CAP[i], v = this.stats[i]; return c && v > c ? c : v; }
+  speed() { return 240 * Math.max(0.3, 1 + this.stat(Stat.SPEED) / 100) * this.rmod('speed') * (this.dashT > 0 ? 4 : 1); }
   damageMult() {
     let m = Math.max(0.1, 1 + this.stats[Stat.DAMAGE] / 100) * (1 + this.growth) * this.rmod('dmg');
     if (this.kind === 'berserk') m *= 1 + Math.max(0, 1 - this.hp / this.maxHp()) * 1.5; // Laranja: fúria
@@ -167,9 +169,9 @@ class Player {
   applyBonus(list, sign) {
     for (const [k, i, v] of list) { if (k === 'S') this.stats[i] += sign * v; else this.specials[i] += sign * v; }
   }
-  dodgeChance() { return Math.min(60, Math.max(0, this.stats[Stat.DODGE])); }
+  dodgeChance() { return Math.max(0, this.stat(Stat.DODGE)); }
   armorFactor() {
-    const a = this.stats[Stat.ARMOR];
+    const a = this.stat(Stat.ARMOR);
     return a >= 0 ? 1 / (1 + a / 15) : 1 + (-a) / 15;
   }
   xpToNext() { return (this.level + 3) * (this.level + 3); }
@@ -455,7 +457,7 @@ class Game {
       p.growth = 0; p.shieldCd = 0; p.dashT = 0;
       if (p.reviveWait > 0) p.reviveWait--; else p.revive = true; // Fênix: recarrega a cada 2 ondas
       p.dashCd = 0; p.fearCd = 3; p.decoyCd = 4; p.gravCd = 3;
-      p.shellHp = p.specials[SP_SHIELD];
+      p.shellHp = Math.min(SP_CAP_SHIELD, p.specials[SP_SHIELD]);
       if (p.kind === 'roulette') {
         p.roulette = this.rng.int(ROULETTE.length);
         if (ROULETTE[p.roulette].slowFoes) this.foeSlow *= ROULETTE[p.roulette].slowFoes;
@@ -685,7 +687,8 @@ class Game {
   }
 
   rollLevelChoices() {
-    const order = [...Array(Stat.COUNT).keys()];
+    // atributos que já estão no limite não aparecem
+    const order = [...Array(Stat.COUNT).keys()].filter((i) => !Stat.CAP[i] || this.player.stats[i] < Stat.CAP[i]);
     for (let i = order.length - 1; i > 0; i--) {
       const j = this.rng.int(i + 1);
       [order[i], order[j]] = [order[j], order[i]];
@@ -824,6 +827,7 @@ class Game {
   update(dt, jx, jy) {
     if (this.bannerTime > 0) this.bannerTime -= dt;
     if (this.state !== 'PLAYING' || this.paused) return;
+    this.clock = (this.clock || 0) + dt; // relógio que nunca volta (limite do roubo de vida)
     this.shake = Math.max(0, this.shake - dt * 25);
     const me = this.player;
     if (me && !me.remote) {
@@ -940,9 +944,10 @@ class Game {
   }
 
   tryLifesteal(p, src) {
-    let ls = p.stats[Stat.LIFESTEAL];
+    let ls = p.stat(Stat.LIFESTEAL);
     if (p.kind === 'vampire' && src && src.def && src.def.type === MELEE) ls += 30; // Vampiro Kiwi
-    if (p.alive && ls > 0 && p.hp < p.maxHp() && this.rng.int(100) < ls) p.heal(1);
+    // no máximo 1 de vida a cada 0,15 s pelo roubo de vida (senão armas rápidas deixam imortal)
+    if (p.alive && ls > 0 && p.hp < p.maxHp() && (this.clock || 0) - (p.lsAt === undefined ? -1 : p.lsAt) >= 0.15 && this.rng.int(100) < ls) { p.lsAt = this.clock || 0; p.heal(1); }
   }
 
   // --- Habilidades das classes ---
@@ -1297,7 +1302,7 @@ class Game {
       if (p.remote) this.followNet(p, dt);
       else if (p === this.player) this.movePlayer(p, dt, jx, jy);
       if (p.iframes > 0) p.iframes -= dt;
-      const regen = p.stats[Stat.REGEN];
+      const regen = p.stat(Stat.REGEN);
       if (regen > 0 && p.hp < p.maxHp()) {
         p.regenAcc += dt * regen * 0.12;
         while (p.regenAcc >= 1) { p.regenAcc -= 1; p.heal(1); }
@@ -1512,6 +1517,7 @@ class Game {
         mx /= len; my /= len;
       }
       if (e.slowTime > 0) { e.slowTime -= dt; sp *= 0.5; }
+      if (e.freezeCd > 0) e.freezeCd -= dt;
       if (e.freeze > 0) { e.freeze -= dt; sp = 0; }
       e.x += mx * sp * dt;
       e.y += my * sp * dt;
@@ -1881,11 +1887,12 @@ class Game {
     e.flash = 0.08;
     if (who) {
       // Balança da Justiça: executa quem está quase morto
-      const ex = who.specials[SP_EXECUTE];
+      const ex = Math.min(SP_CAP_EXECUTE, who.specials[SP_EXECUTE]);
       if (ex > 0 && !e.def.boss && e.hp > 0 && e.hp < e.maxHp * ex / 100) { e.hp = 0; this.addText(e.x, e.y - e.radius - 14, 'EXECUTADO', '#E0E0E0', 18); }
       // congelar (Gelo Seco, Galáxia, conjunto Glacial)
-      const fr = who.specials[SP_FREEZE];
-      if (fr > 0 && e.hp > 0 && !e.def.boss && this.rng.int(100) < fr) e.freeze = Math.max(e.freeze || 0, 1.2);
+      // (no máximo 30% de chance, e quem descongela fica 1,5 s sem poder congelar de novo)
+      const fr = Math.min(SP_CAP_FREEZE, who.specials[SP_FREEZE]);
+      if (fr > 0 && e.hp > 0 && !e.def.boss && !(e.freezeCd > 0) && this.rng.int(100) < fr) { e.freeze = 1.2; e.freezeCd = 2.7; }
       // Manga Elementar: fogo, gelo ou choque
       if (who.kind === 'elements' && src && src.def && e.hp > 0) this.elementHit(who, e, dmg);
     }

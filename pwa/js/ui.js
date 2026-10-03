@@ -775,7 +775,7 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v4.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('Projeto escolar • feito com JavaScript puro • v4.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -1761,8 +1761,9 @@ class Ui {
         this.weaponStats(new Weapon(o.weapon, o.tier), x + 14, ly, cw - 28, !narrow);
       } else {
         for (let m = 0; m < o.item.mods.length; m += 2) {
-          const v = o.item.mods[m + 1];
-          this.text(Stat.format(o.item.mods[m], v), x + 14, ly, narrow ? 16 : 19, v >= 0 ? '#8CF08C' : '#FF8080', 'left');
+          const v = o.item.mods[m + 1], st = o.item.mods[m], full = v > 0 && Stat.CAP[st] && p.stats[st] >= Stat.CAP[st];
+          this.text(Stat.format(st, v), x + 14, ly, narrow ? 16 : 19, full ? '#9A9A9A' : v >= 0 ? '#8CF08C' : '#FF8080', 'left');
+          if (full) { ly += 19; this.text('🔒 já está no limite', x + 14, ly, narrow ? 13 : 15, '#C8B070', 'left'); }
           ly += 24;
         }
         if (o.item.specialText) this.wrapped(o.item.specialText, x + 14, ly, cw - 28, narrow ? 15 : 17, o.item.only === 'laser' ? '#FF9AA8' : '#FFE08A', 'left');
@@ -1909,6 +1910,9 @@ class Ui {
   tooltip(it, x, y) {
     const lines = [[it.name, TIER_COLOR[it.tier]]];
     for (let m = 0; m < it.mods.length; m += 2) lines.push([Stat.format(it.mods[m], it.mods[m + 1]), it.mods[m + 1] >= 0 ? '#8CF08C' : '#FF8080']);
+    const caps = [];
+    for (let m = 0; m < it.mods.length; m += 2) if (Stat.CAP[it.mods[m]]) caps.push(Stat.NAMES[it.mods[m]] + ' máx. ' + Stat.CAP[it.mods[m]] + (Stat.PERCENT[it.mods[m]] ? '%' : ''));
+    if (caps.length) lines.push(['Limite: ' + caps.join(', '), '#B0B0B0']);
     if (it.specialText) lines.push([it.specialText, '#FFE08A']);
     if (it.tags && it.tags.length) lines.push(['Conjunto: ' + it.tags.map((t) => SETS[t].icon + ' ' + SETS[t].name).join(', '), '#9FE8FF']);
     const w = Math.max(...lines.map((l) => this.measure(l[0], 18))) + 24;
@@ -1946,12 +1950,13 @@ class Ui {
     const size = Math.min(21, rowH * 0.66, w / 14);
     for (let i = 0; i < Stat.COUNT; i++) {
       const ry = y + 56 + i * rowH + rowH * 0.7;
-      const v = p.stats[i];
-      const val = (i === Stat.HP ? p.maxHp() : v) + (Stat.PERCENT[i] ? '%' : '');
-      const color = i === Stat.HP ? '#FFFFFF' : v > 0 ? '#8CF08C' : v < 0 ? '#FF8080' : '#DDDDDD';
+      const v = p.stats[i], capped = Stat.CAP[i] && v >= Stat.CAP[i];
+      const val = (i === Stat.HP ? p.maxHp() : capped ? Stat.CAP[i] : v) + (Stat.PERCENT[i] ? '%' : '');
+      const color = i === Stat.HP ? '#FFFFFF' : capped ? C.GOLD : v > 0 ? '#8CF08C' : v < 0 ? '#FF8080' : '#DDDDDD';
       this.emoji(Stat.ICONS[i], x + 26, ry - size * 0.35, size * 1.1);
       this.text(Stat.NAMES[i], x + 46, ry, size, '#E0E0E0', 'left');
       this.text(String(val), x + w - 16, ry, size, color, 'right');
+      if (capped) this.emoji('🔒', x + w - 22 - this.measure(String(val), size) - size * 0.55, ry - size * 0.35, size * 0.85); // no limite
     }
   }
 
