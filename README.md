@@ -5,7 +5,7 @@ legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a ho
 Tem **30 personagens**, **76 itens** (+ itens exclusivos), **6 dificuldades**, **Desafio do Dia**, **conquistas**,
 **multiplayer cooperativo e PvP**, ranking, contas e enquetes.
 
-![Menu](docs/v4_menu.png)
+![Capa do Horta Hostil](docs/capa.png)
 
 ## ▶️ Onde jogar
 
@@ -48,6 +48,8 @@ depois da primeira visita.
 | ![Personagens](docs/v4_personagens.png) | ![Desafio](docs/v4_desafio.png) |
 | **Conquistas** | **Loja com conjuntos** |
 | ![Conquistas](docs/v4_conquistas.png) | ![Loja](docs/v4_loja.png) |
+| **Menu** | **Capa vertical** |
+| ![Menu](docs/v4_menu.png) | <img src="docs/capa_vertical.png" width="260"> |
 | **Build de um jogador do ranking** | **Limão (aura), Uva (uva falsa), Alface (dash) e Pera (espelho)** |
 | ![Build](docs/v4_build.png) | ![Classes](docs/v4_classes.png) |
 
@@ -207,6 +209,7 @@ pwa/                      o jogo (site e app usam os mesmos arquivos)
     ├── ranking.js        ranking online
     └── main.js           liga tudo e roda o laço do jogo (60 vezes por segundo)
 app/src/main/             app Android (MainActivity.java + ícone)
+tools/capa.html           desenha a capa com a arte do jogo (abra com ?w=1920&h=1080)
 tools/fake-firebase.js    Firebase "de mentira" para testar o multiplayer sem internet
 firebase-rules.json       regras de segurança do banco
 ```

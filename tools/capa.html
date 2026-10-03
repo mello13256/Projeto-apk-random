@@ -1,0 +1,364 @@
+<!doctype html>
+<!-- Capa do Horta Hostil, desenhada com a própria arte do jogo (legumes, partículas e armas).
+     Abra com ?w=1920&h=1080 (horizontal) ou ?w=1080&h=1920 (vertical) e tire um print do canvas.
+     Precisa ser servido pela raiz do repositório (ex.: npx http-server . → /tools/capa.html). -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Capa do Horta Hostil</title>
+<style>html, body { margin: 0; background: #000; } canvas { display: block; }</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="../pwa/js/data.js"></script>
+<script src="../pwa/js/game.js"></script>
+<script src="../pwa/js/sfx.js"></script>
+<script src="../pwa/js/net.js"></script>
+<script src="../pwa/js/ranking.js"></script>
+<script src="../pwa/js/mp.js"></script>
+<script src="../pwa/js/ui.js"></script>
+<script src="../pwa/js/art.js"></script>
+<script src="../pwa/js/community.js"></script>
+<script src="../pwa/js/meta.js"></script>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const WW = +q.get('w') || 1920, HH = +q.get('h') || 1080;
+const vertical = HH > WW;
+const canvas = document.getElementById('c');
+canvas.width = WW; canvas.height = HH;
+const ctx = canvas.getContext('2d');
+
+// Emojis em alta resolução (o jogo limita a 192 px; a capa precisa de mais)
+class BigSprites extends Sprites {
+  get(emoji, px, tint) {
+    const size = Math.ceil(Math.max(16, Math.min(512, Math.round(px))) / 8) * 8;
+    const key = emoji + '#' + size + '#' + (tint || '');
+    let c = this.cache.get(key);
+    if (c) return c;
+    c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+    if (tint) {
+      g.drawImage(this.get(emoji, size, null), 0, 0);
+      g.globalCompositeOperation = 'source-atop';
+      g.fillStyle = tint; g.fillRect(0, 0, size, size);
+    } else {
+      g.font = `${Math.round(size * 0.8)}px ${EMOJI_FONT}`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(emoji, size / 2, size / 2 + size * 0.04);
+    }
+    this.cache.set(key, c);
+    return c;
+  }
+}
+
+const u = Object.create(Ui.prototype);
+u.ctx = ctx; u.time = 1.7; u.scale = 2.2; u.sprites = new BigSprites(); u.vw = WW; u.touch = true;
+const rnd = makeRng(20261003);
+const R = (a, b) => a + rnd.float() * (b - a);
+const ch = (name) => CHARS.find((c) => c.name === name);
+
+// ---------------------------------------------------------------- céu e cenário
+function sky() {
+  const g = ctx.createLinearGradient(0, 0, 0, HH * 0.62);
+  g.addColorStop(0, '#2B1B4A'); g.addColorStop(0.45, '#C2436B'); g.addColorStop(0.8, '#FF9A3C'); g.addColorStop(1, '#FFD36B');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, WW, HH);
+  // sol
+  const sx = WW * 0.5, sy = HH * (vertical ? 0.47 : 0.6);
+  const sg = ctx.createRadialGradient(sx, sy, 10, sx, sy, WW * 0.45);
+  sg.addColorStop(0, 'rgba(255,240,170,0.95)'); sg.addColorStop(0.15, 'rgba(255,200,90,0.6)'); sg.addColorStop(1, 'rgba(255,140,60,0)');
+  ctx.fillStyle = sg; ctx.fillRect(0, 0, WW, HH);
+  // estrelinhas no alto
+  for (let i = 0; i < 70; i++) {
+    ctx.globalAlpha = R(0.2, 0.8);
+    u.circle(R(0, WW), R(0, HH * 0.22), R(0.8, 2.2), '#FFF6D8');
+  }
+  ctx.globalAlpha = 1;
+  // morros
+  const hill = (y, amp, col, seed) => {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, HH);
+    for (let x = 0; x <= WW; x += 20) ctx.lineTo(x, y + Math.sin(x / (WW * 0.18) + seed) * amp + Math.sin(x / 97 + seed * 3) * amp * 0.15);
+    ctx.lineTo(WW, HH); ctx.closePath(); ctx.fill();
+  };
+  const hy = HH * (vertical ? 0.5 : 0.56);
+  hill(hy - HH * 0.04, HH * 0.035, '#6B3A5C', 1.3);
+  hill(hy, HH * 0.03, '#40304A', 4.1);
+}
+
+function ground(fenceY) {
+  // horta: grama com xadrez (igual à arena), mais escura no fundo
+  const g = ctx.createLinearGradient(0, fenceY, 0, HH);
+  g.addColorStop(0, '#3E6B2A'); g.addColorStop(1, '#6FA84A');
+  ctx.fillStyle = g; ctx.fillRect(0, fenceY, WW, HH - fenceY);
+  const rows = 9;
+  for (let r = 0; r < rows; r++) {
+    const y0 = fenceY + (HH - fenceY) * Math.pow(r / rows, 1.6), y1 = fenceY + (HH - fenceY) * Math.pow((r + 1) / rows, 1.6);
+    const cw = 60 + r * 28;
+    for (let x = ((r % 2) * cw) - cw; x < WW; x += cw * 2) {
+      ctx.fillStyle = 'rgba(255,255,255,0.045)'; ctx.fillRect(x, y0, cw, y1 - y0);
+    }
+  }
+  // canteiros com folhinhas e flores
+  for (let i = 0; i < 90; i++) {
+    const y = fenceY + 30 + Math.pow(rnd.float(), 1.3) * (HH - fenceY - 30), k = 0.5 + (y - fenceY) / (HH - fenceY);
+    const x = R(0, WW);
+    if (rnd.float() < 0.35) {
+      ctx.fillStyle = ['#FFFFFF', '#FFB3C7', '#FFE066', '#B79CFF'][rnd.int(4)];
+      for (let p = 0; p < 5; p++) u.circle(x + Math.cos(p * 1.256) * 4 * k, y + Math.sin(p * 1.256) * 4 * k, 3.2 * k, ctx.fillStyle);
+      u.circle(x, y, 2.4 * k, '#F6A800');
+    } else {
+      ctx.strokeStyle = 'rgba(30,70,20,0.55)'; ctx.lineWidth = 2 * k; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4 * k, y - 9 * k); ctx.moveTo(x, y); ctx.lineTo(x + 4 * k, y - 10 * k); ctx.stroke();
+    }
+  }
+}
+
+function fence(y) {
+  const postW = WW / 26;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fillRect(0, y + 8, WW, 18);
+  for (const ry of [y - 70, y - 30]) {
+    ctx.fillStyle = '#6B4A26'; ctx.fillRect(0, ry, WW, 16);
+    ctx.fillStyle = '#8A6234'; ctx.fillRect(0, ry, WW, 6);
+  }
+  for (let x = postW * 0.3; x < WW; x += postW) {
+    ctx.fillStyle = '#5A3C1E'; ctx.fillRect(x, y - 110, postW * 0.42, 120);
+    ctx.fillStyle = '#8A6234'; ctx.fillRect(x, y - 110, postW * 0.14, 120);
+    ctx.beginPath(); ctx.moveTo(x - 2, y - 110); ctx.lineTo(x + postW * 0.21, y - 128); ctx.lineTo(x + postW * 0.42 + 2, y - 110); ctx.fillStyle = '#5A3C1E'; ctx.fill();
+  }
+}
+
+// ---------------------------------------------------------------- insetos
+const BUGS = ['🐛', '🐜', '🕷️', '🐝', '🪲', '🦗', '🐞', '🦂', '🦟'];
+function bug(icon, x, y, size, dark) {
+  ctx.save(); ctx.translate(x, y);
+  if (rnd.float() < 0.5) ctx.scale(-1, 1);
+  ctx.rotate(R(-0.25, 0.25));
+  u.emoji(icon, 0, 0, size, dark ? 'rgba(40,10,30,' + dark + ')' : null);
+  ctx.restore();
+  if (size > 40) { // olhinhos vermelhos brilhando nos de trás
+    const a = dark ? 0.9 : 0;
+    if (a) { u.circle(x - size * 0.1, y - size * 0.08, size * 0.035, '#FF3030'); u.circle(x + size * 0.1, y - size * 0.08, size * 0.035, '#FF3030'); }
+  }
+}
+
+function swarm(fenceY) {
+  // rainha gigante atrás da cerca
+  const qx = vertical ? WW * 0.5 : WW * 0.78, qy = vertical ? fenceY - HH * 0.15 : fenceY - HH * 0.2, qs = vertical ? WW * 0.62 : HH * 0.62;
+  const aura = ctx.createRadialGradient(qx, qy, qs * 0.1, qx, qy, qs * 0.75);
+  aura.addColorStop(0, 'rgba(176,58,255,0.55)'); aura.addColorStop(1, 'rgba(176,58,255,0)');
+  ctx.fillStyle = aura; ctx.beginPath(); ctx.arc(qx, qy, qs * 0.75, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(qx, qy); ctx.scale(-1, 1); ctx.rotate(-0.12);
+  u.emoji('🐜', 0, 0, qs, 'rgba(70,10,50,0.22)');
+  ctx.restore();
+  // olho vermelho brilhando da rainha
+  const ex = qx + qs * 0.294, ey = qy - qs * 0.063;
+  const eg = ctx.createRadialGradient(ex, ey, 2, ex, ey, qs * 0.09);
+  eg.addColorStop(0, 'rgba(255,255,255,1)'); eg.addColorStop(0.25, 'rgba(255,40,40,0.95)'); eg.addColorStop(1, 'rgba(255,0,0,0)');
+  ctx.fillStyle = eg; ctx.beginPath(); ctx.arc(ex, ey, qs * 0.09, 0, Math.PI * 2); ctx.fill();
+  // enxame no céu e passando pela cerca
+  const n = vertical ? 46 : 60;
+  for (let i = 0; i < n; i++) {
+    const far = rnd.float();
+    const x = R(-40, WW + 40), y = vertical ? R(HH * 0.1, fenceY - 40) : R(HH * 0.08, fenceY - 30);
+    if (Math.hypot(x - qx, y - qy) < qs * 0.35) continue;
+    const size = 26 + far * 54;
+    const icon = y < fenceY - HH * 0.18 && rnd.float() < 0.6 ? ['🐝', '🦟', '🦗'][rnd.int(3)] : BUGS[rnd.int(BUGS.length)];
+    bug(icon, x, y, size, (0.55 - far * 0.4).toFixed(2));
+  }
+  // os que já pularam a cerca (na frente dela, sem sombra)
+  for (let i = 0; i < (vertical ? 9 : 14); i++) {
+    const x = R(0, WW), y = fenceY + R(10, HH * 0.1);
+    bug(BUGS[rnd.int(BUGS.length)], x, y, R(56, 84), 0);
+  }
+}
+
+// ---------------------------------------------------------------- legumes
+function weapon(def, tier, x, y, ang, k) {
+  const w = new Weapon(def, tier);
+  w.tipX = x; w.tipY = y; w.angle = ang; w.x = x; w.y = y;
+  ctx.save(); ctx.translate(x, y); ctx.scale(k, k); ctx.translate(-x, -y);
+  u.drawWeapon(w, 0);
+  ctx.restore();
+}
+
+function hero(name, x, y, size, o, weapons) {
+  const c = ch(name);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(x, y + size * 0.36, size * 0.38, size * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  for (const [def, tier, dx, dy, ang] of weapons || []) if (dy >= 0) weapon(def, tier, x + dx * size, y + dy * size, ang, size / 68 * 0.62);
+  u.drawHero(c, x, y, size, Object.assign({ lookX: 0.6, lookY: -0.4 }, o));
+  for (const [def, tier, dx, dy, ang] of weapons || []) if (dy < 0) weapon(def, tier, x + dx * size, y + dy * size, ang, size / 68 * 0.62);
+}
+
+function laser(x0, y0, x1, y1) {
+  ctx.lineCap = 'round';
+  for (const [w, c] of [[44, 'rgba(255,40,60,0.18)'], [24, 'rgba(255,60,80,0.45)'], [11, '#FF4A5A'], [4, '#FFE0E4']]) {
+    ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  }
+  const g = ctx.createRadialGradient(x1, y1, 2, x1, y1, 70);
+  g.addColorStop(0, 'rgba(255,255,255,0.95)'); g.addColorStop(0.3, 'rgba(255,90,90,0.7)'); g.addColorStop(1, 'rgba(255,40,40,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x1, y1, 70, 0, Math.PI * 2); ctx.fill();
+}
+
+function boomerang(x, y, s, a) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.scale(s, s);
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#6D4C00'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(-10, 7); ctx.lineTo(0, -5); ctx.lineTo(10, 7); ctx.stroke();
+  ctx.strokeStyle = '#FFD54F'; ctx.lineWidth = 5; ctx.stroke();
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,230,120,0.5)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(x - 40 * s, y + 10 * s, 40 * s, -0.6, 0.5); ctx.stroke();
+}
+
+function blackHole(x, y, r) {
+  for (let i = 0; i < 4; i++) {
+    ctx.strokeStyle = `rgba(149,117,205,${0.2 + i * 0.15})`; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, r * (2.2 - i * 0.35), i, i + 4.5); ctx.stroke();
+  }
+  const g = ctx.createRadialGradient(x, y, 3, x, y, r);
+  g.addColorStop(0, '#000'); g.addColorStop(0.6, '#1A0B33'); g.addColorStop(1, 'rgba(94,53,177,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+}
+
+function acidAura(x, y, r) {
+  const g = ctx.createRadialGradient(x, y, r * 0.3, x, y, r);
+  g.addColorStop(0, 'rgba(212,255,74,0)'); g.addColorStop(0.8, 'rgba(212,255,74,0.16)'); g.addColorStop(1, 'rgba(212,255,74,0.38)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.setLineDash([16, 14]); ctx.strokeStyle = 'rgba(230,255,110,0.7)'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+}
+
+function sparks(n, area) {
+  for (let i = 0; i < n; i++) {
+    const x = R(area[0], area[2]), y = R(area[1], area[3]), kind = rnd.int(5);
+    ctx.globalAlpha = R(0.6, 1);
+    if (kind === 0) u.sparkle(x, y, R(5, 12), '#FFF3B0');
+    else if (kind === 1) u.circle(x, y, R(2.5, 6), '#FF9100');
+    else if (kind === 2) u.sparkle(x, y, R(5, 10), '#B3E5FC');
+    else if (kind === 3) { u.circle(x, y, 8, C.SEED); u.circle(x - 2.5, y - 2.5, 3, '#D6FFB0'); }
+    else u.circle(x, y, R(2, 4), '#FFE14A');
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------------------------------------------------------------- título
+function title(cx, y, size) {
+  ctx.save();
+  ctx.font = `900 ${size}px ${FONT}`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic'; ctx.lineJoin = 'round';
+  // sombra grossa
+  ctx.fillStyle = '#3A1A00'; ctx.fillText('HORTA HOSTIL', cx + size * 0.04, y + size * 0.07);
+  ctx.lineWidth = size * 0.16; ctx.strokeStyle = '#000'; ctx.strokeText('HORTA HOSTIL', cx, y);
+  const g = ctx.createLinearGradient(0, y - size * 0.8, 0, y);
+  g.addColorStop(0, '#FFF5B0'); g.addColorStop(0.45, '#FFD84A'); g.addColorStop(1, '#FF9F1C');
+  ctx.fillStyle = g; ctx.fillText('HORTA HOSTIL', cx, y);
+  ctx.lineWidth = size * 0.025; ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.strokeText('HORTA HOSTIL', cx, y - size * 0.02);
+  ctx.restore();
+}
+function subtitle(s, cx, y, size, color) {
+  ctx.save();
+  ctx.font = `800 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.22; ctx.strokeStyle = '#000'; ctx.strokeText(s, cx, y);
+  ctx.fillStyle = color; ctx.fillText(s, cx, y);
+  ctx.restore();
+}
+function badge(s, x, y, size) {
+  ctx.font = `800 ${size}px ${FONT}`;
+  const w = ctx.measureText(s).width + size * 1.4, h = size * 1.7;
+  u.roundRect(x - w / 2, y - h / 2 + 5, w, h, h / 2, 'rgba(0,0,0,0.45)');
+  u.roundRect(x - w / 2, y - h / 2, w, h, h / 2, '#2E6B3A', '#FFD84A', 3);
+  ctx.fillStyle = '#FFFFFF'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y + 1);
+  ctx.textBaseline = 'alphabetic';
+  return w;
+}
+
+// ---------------------------------------------------------------- cena
+function scene() {
+  sky();
+  const fenceY = HH * (vertical ? 0.5 : 0.6);
+  swarm(fenceY);
+  fence(fenceY);
+  ground(fenceY + 10);
+  // insetos que pularam a cerca já estão desenhados em swarm(); por cima da grama, mais alguns
+  for (let i = 0; i < (vertical ? 6 : 8); i++) bug(BUGS[rnd.int(BUGS.length)], R(0, WW), fenceY + R(40, HH * 0.16), R(60, 90), 0);
+
+  const S = vertical ? WW / 1080 : HH / 1080; // escala geral
+  const L = vertical
+    ? { // vertical: duas fileiras
+      back: [['Limão Azedo', 0.2, 0.62, 190], ['Cyborg Cebola', 0.5, 0.6, 200], ['Azeitona Gravitacional', 0.8, 0.62, 180]],
+      front: [['Cenoura Ninja', 0.2, 0.765, 220], ['Batata Básica', 0.5, 0.79, 300], ['Tomatão', 0.79, 0.765, 240], ['Banana Bumerangue', 0.3, 0.895, 200], ['Pera Espelho', 0.7, 0.895, 190]],
+    }
+    : {
+      back: [['Limão Azedo', 0.1, 0.7, 190], ['Azeitona Gravitacional', 0.91, 0.72, 180], ['Milho Atirador', 0.24, 0.67, 175], ['Pera Espelho', 0.77, 0.68, 175]],
+      front: [['Cenoura Ninja', 0.33, 0.8, 250], ['Batata Básica', 0.5, 0.8, 320], ['Tomatão', 0.67, 0.8, 270], ['Cyborg Cebola', 0.15, 0.83, 220], ['Banana Bumerangue', 0.86, 0.84, 210]],
+    };
+  const pos = {};
+  for (const row of [L.back, L.front]) for (const [n, fx, fy, s] of row) pos[n] = [fx * WW, fy * HH, s * S];
+
+  // efeitos no chão
+  const [lx, ly, ls] = pos['Limão Azedo']; acidAura(lx, ly, ls * 1.15);
+  const [ax, ay, as] = pos['Azeitona Gravitacional']; blackHole(ax + (vertical ? -as * 0.2 : -as * 0.9), ay - as * 1.15, as * 0.42);
+
+  const WEAP = {
+    'Batata Básica': [[W.SOCO, 1, -0.55, -0.05, -2.6], [W.ESTILINGUE, 2, 0.6, -0.12, -0.5]],
+    'Tomatão': [[W.ESPADA, 3, 0.55, -0.35, -1.0], [W.MARTELO, 1, -0.6, -0.1, -2.4]],
+    'Cenoura Ninja': [[W.FACA, 2, 0.55, -0.05, -0.6], [W.FACA, 1, -0.55, 0.05, -2.6]],
+    'Milho Atirador': [[W.PISTOLA, 2, 0.6, 0, -0.35]],
+    'Pera Espelho': [[W.ARCO, 2, 0.55, -0.05, -0.9]],
+    'Limão Azedo': [[W.CAJADO, 2, 0.55, -0.05, -0.7]],
+    'Azeitona Gravitacional': [[W.RAIO, 2, -0.55, -0.05, -2.3]],
+    'Banana Bumerangue': [[W.ESTILINGUE, 1, -0.55, -0.05, -2.5]],
+    'Cyborg Cebola': [],
+  };
+  for (const [n] of L.back) { const [x, y, s] = pos[n]; hero(n, x, y, s, { facingLeft: x > WW / 2, lookX: x > WW / 2 ? -0.6 : 0.6, lookY: -0.6 }, WEAP[n]); }
+
+  // laser do Cyborg rumo à rainha
+  const [cx0, cy0, cs] = pos['Cyborg Cebola'];
+  const qx = vertical ? WW * 0.5 : WW * 0.78, qy = vertical ? HH * 0.35 : HH * 0.42;
+  const la = Math.atan2(qy - cy0, qx - cx0);
+  laser(cx0 + Math.cos(la) * cs * 0.5, cy0 + Math.sin(la) * cs * 0.5, qx - (vertical ? 0 : WW * 0.08), qy);
+
+  for (const [n] of L.front) {
+    const [x, y, s] = pos[n];
+    const o = n === 'Cyborg Cebola' ? { facingLeft: false, lookX: Math.cos(la), lookY: Math.sin(la) } : { facingLeft: x > WW * 0.55, lookX: x > WW * 0.55 ? -0.5 : 0.5, lookY: -0.7 };
+    hero(n, x, y, s, o, WEAP[n]);
+  }
+  // espelho da Pera
+  const [px, py, ps] = pos['Pera Espelho'];
+  ctx.strokeStyle = 'rgba(178,235,242,0.8)'; ctx.lineWidth = 5;
+  for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + 0.3; ctx.beginPath(); ctx.arc(px, py, ps * 0.62, a, a + 0.6); ctx.stroke(); }
+  // bumerangues da Banana
+  const [bx, by, bs] = pos['Banana Bumerangue'];
+  boomerang(bx - bs * 0.9, by - bs * 1.1, 2.2 * S, 0.4);
+  boomerang(bx - bs * 0.2, by - bs * 1.7, 1.8 * S, 1.6);
+
+  sparks(vertical ? 70 : 90, [0, HH * 0.4, WW, HH]);
+
+  // vinheta
+  const v = ctx.createRadialGradient(WW / 2, HH / 2, Math.min(WW, HH) * 0.35, WW / 2, HH / 2, Math.max(WW, HH) * 0.75);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = v; ctx.fillRect(0, 0, WW, HH);
+
+  // título
+  if (vertical) {
+    title(WW / 2, HH * 0.13, WW * 0.118);
+    subtitle('Os legumes contra-atacam!', WW / 2, HH * 0.175, WW * 0.055, '#E8F5D0');
+    const y = HH * 0.965;
+    badge('30 legumes  •  multiplayer  •  desafio do dia', WW / 2, y, WW * 0.032);
+  } else {
+    title(WW / 2, HH * 0.2, HH * 0.19);
+    subtitle('Os legumes contra-atacam!', WW / 2, HH * 0.28, HH * 0.05, '#E8F5D0');
+    const items = ['🥔 30 legumes', '👥 multiplayer', '📅 desafio do dia', '🏆 ranking online'];
+    const y = HH * 0.955, size = HH * 0.026;
+    ctx.font = `800 ${size}px ${FONT}`;
+    const ws = items.map((s) => ctx.measureText(s).width + size * 1.4), gap = size * 0.9;
+    let x = WW / 2 - (ws.reduce((a, b) => a + b, 0) + gap * (ws.length - 1)) / 2;
+    items.forEach((s, i) => { badge(s, x + ws[i] / 2, y, size); x += ws[i] + gap; });
+  }
+}
+
+document.fonts.ready.then(() => { scene(); document.title = 'pronto'; });
+</script>
+</body>
+</html>
