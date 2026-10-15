@@ -15,6 +15,7 @@ BANNER='/* Horta Hostil (c) 2026 mello13256. Todos os direitos reservados. Proib
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)" # caminho absoluto (os comandos abaixo mudam de pasta)
 (cd "$ROOT/pwa" && cp -r index.html manifest.webmanifest sw.js capa.jpg icons js "$OUT/")
 
 for f in "$OUT"/js/*.js "$OUT/sw.js"; do
