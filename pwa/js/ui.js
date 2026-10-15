@@ -242,7 +242,10 @@ class Ui {
           if (pos >= 0) this.rankPost.pos = pos + 1;
         }, () => {});
       }).catch((e) => {
-        this.rankPost = { status: 'error', msg: e && e.status === 401 ? 'faltam as regras novas do Firebase' : navigator.onLine === false ? 'sem internet' : 'não deu pra falar com o servidor' };
+        const refused = e && e.status === 401;
+        const msg = refused && this.ticket && !this.ticket.ok ? 'a partida começou sem internet e não vale'
+          : refused ? 'o servidor não aceitou esta partida' : navigator.onLine === false ? 'sem internet' : 'não deu pra falar com o servidor';
+        this.rankPost = { status: 'error', msg };
       });
     };
     const name = this.prefs.data.playerName;
@@ -252,6 +255,14 @@ class Ui {
       const n = 'Legume' + Math.floor(1000 + Math.random() * 9000);
       this.prefs.data.playerName = n; this.prefs.save(); go(n);
     });
+  }
+
+  /** Bilhete de partida no servidor (sem ele, a partida não entra no ranking). */
+  startTicket() {
+    const g = this.game;
+    if (g.coop || g.pvp) return;
+    const t = this.ticket = { ok: false };
+    Ranking.ticket(this.account.rankId(), g.daily ? 'daily' : 'd' + g.difficulty).then(() => { t.ok = true; }, () => {});
   }
 
   /** Texto do ranking no fim da partida. */
@@ -515,6 +526,7 @@ class Ui {
         if (this.touch) enterMobileFullscreen();
         break;
       case 'CONTINUE':
+        this.ticket = null; // o bilhete é o do começo dessa partida (gravado lá atrás)
         if (g.loadFromString(this.prefs.data.savedRun)) this.showToast('Partida carregada: onda ' + g.wave + ' concluída');
         else { this.prefs.clearRun(); this.showToast('Não deu pra carregar a partida salva.'); }
         if (this.touch) enterMobileFullscreen();
@@ -597,6 +609,7 @@ class Ui {
         this.prefs.data.lastDiff = this.difficulty;
         this.prefs.clearRun();
         g.newRun(CHARS[idx], this.difficulty);
+        this.startTicket();
         this.joy = null;
         break;
       }
@@ -605,6 +618,7 @@ class Ui {
         this.prefs.clearRun();
         if (g.daily) { this.startDaily(); break; }
         g.newRun(p ? p.character : CHARS[0], g.difficulty);
+        this.startTicket();
         this.joy = null;
         break;
       case 'MENU': g.state = 'MENU'; g.paused = false; break;
@@ -775,7 +789,7 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('Projeto escolar • feito com JavaScript puro • v4.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('© 2026 mello13256 • todos os direitos reservados • v4.2', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 

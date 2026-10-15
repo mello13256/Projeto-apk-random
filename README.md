@@ -22,6 +22,17 @@ O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ n
 Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
 depois da primeira visita.
 
+## 🔒 Versão 4.2: proteção do jogo e do ranking
+
+- **Licença:** o jogo é protegido por direitos autorais, com todos os direitos reservados (veja [`LICENSE`](LICENSE)).
+  É permitido jogar pelo site e pelo app oficiais; copiar, republicar ou modificar não.
+- **Código publicado minificado:** o site e o APK recebem o JavaScript compactado (sem comentários, com nomes
+  encurtados), gerado por [`tools/build-web.sh`](tools/build-web.sh). O código legível fica só neste repositório.
+- **Ranking protegido por "bilhete de partida":** quando uma partida solo começa, o jogo grava a hora do servidor
+  em `runs/<jogador>`. As regras do Firebase só aceitam a pontuação se passou um tempo mínimo desde o bilhete
+  (12 segundos por onda alcançada), então não dá mais pra mandar um resultado inventado sem jogar.
+  Partidas que começaram sem internet não entram no ranking.
+
 ## 🆕 Versão 4.1: mais difícil e sem legume imortal
 
 - **Todas as dificuldades ficaram 2x mais difíceis:** os insetos têm cerca de 40% mais vida, dão 40% mais dano
@@ -228,6 +239,7 @@ pwa/                      o jogo (site e app usam os mesmos arquivos)
     ├── ranking.js        ranking online
     └── main.js           liga tudo e roda o laço do jogo (60 vezes por segundo)
 app/src/main/             app Android (MainActivity.java + ícone)
+tools/build-web.sh        gera a versão publicada (JavaScript minificado) do site e do APK
 tools/capa.html           desenha a capa com a arte do jogo (abra com ?w=1920&h=1080)
 tools/fake-firebase.js    Firebase "de mentira" para testar o multiplayer sem internet
 firebase-rules.json       regras de segurança do banco

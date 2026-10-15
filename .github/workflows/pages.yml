@@ -1,11 +1,11 @@
-# Publica o jogo no navegador (PWA, pasta pwa/) e o APK no GitHub Pages.
+# Publica o jogo no navegador (PWA, pasta pwa/, com o JavaScript minificado) e o APK no GitHub Pages.
 # Para ativar: Settings > Pages > Source: "GitHub Actions".
 name: Publicar PWA
 
 on:
   push:
     branches: [main, claude/sharp-bardeen-h5fvw9]
-    paths: ['pwa/**', 'HortaHostil.apk', '.github/workflows/pages.yml']
+    paths: ['pwa/**', 'HortaHostil.apk', 'tools/build-web.sh', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -25,11 +25,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Gerar a versão publicada (JavaScript minificado)
+        run: bash tools/build-web.sh _site
       - name: Colocar o APK junto do site (botão "Baixar app Android")
-        run: cp HortaHostil.apk pwa/HortaHostil.apk
+        run: cp HortaHostil.apk _site/HortaHostil.apk
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: pwa
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

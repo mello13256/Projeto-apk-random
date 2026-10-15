@@ -38,6 +38,7 @@ const MetaUi = {
     const ch = dailyChallenge();
     this.prefs.clearRun();
     this.game.newRun(CHARS[ch.char], ch.diff, ch);
+    this.startTicket();
     this.joy = null;
   },
 

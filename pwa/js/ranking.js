@@ -66,6 +66,18 @@ const Ranking = {
     return { weapons, items };
   },
 
+  /**
+   * Bilhete de partida: ao começar uma partida solo, o jogo grava a hora (do servidor) em
+   * runs/<jogador>/<dificuldade ou 'daily'>. As regras do Firebase só aceitam a pontuação no
+   * ranking se passou um tempo mínimo desde esse bilhete (12 s por onda), então não dá pra
+   * inventar um resultado sem jogar.
+   */
+  async ticket(playerId, slot) {
+    const url = RANKING_URL.replace(/\/ranking$/, '/runs/') + playerId + '/' + slot + '.json';
+    const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ t: { '.sv': 'timestamp' } }) });
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+  },
+
   async postBestAt(base, playerId, entry) {
     const url = `${base}/${playerId}.json`;
     const score = this.scoreOf(entry.won, entry.wave, entry.kills);

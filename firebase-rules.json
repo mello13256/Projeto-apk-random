@@ -9,7 +9,7 @@
           "score"
         ],
         "$id": {
-          ".write": "$diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val())",
+          ".write": "$diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child($diff).child('t').isNumber() && now - root.child('runs').child($id).child($diff).child('t').val() >= (newData.child('wave').val() - 1) * 12000",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
@@ -54,7 +54,7 @@
           "score"
         ],
         "$id": {
-          ".write": "$day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val())",
+          ".write": "$day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child('daily').child('t').isNumber() && now - root.child('runs').child($id).child('daily').child('t').val() >= (newData.child('wave').val() - 1) * 12000",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
@@ -88,6 +88,20 @@
           },
           "b": {
             ".validate": "newData.isString() && newData.val().length <= 1000"
+          }
+        }
+      }
+    },
+    "runs": {
+      "$id": {
+        "$slot": {
+          ".write": "$id.matches(/^[ad][a-z0-9]{15,24}$/) && ($slot.matches(/^d[0-5]$/) || $slot === 'daily') && newData.exists()",
+          ".validate": "newData.hasChildren(['t'])",
+          "t": {
+            ".validate": "newData.isNumber() && newData.val() === now"
+          },
+          "$other": {
+            ".validate": false
           }
         }
       }

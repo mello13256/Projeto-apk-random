@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compila o APK do Horta Hostil SEM Android Studio/Gradle.
-# Precisa apenas de: Java (JDK 17+), curl, zip e npm (para baixar o aapt2).
+# Precisa apenas de: Java (JDK 17+), curl, zip e Node.js/npm (aapt2 e o minificador terser).
 #
 #   ./build.sh        -> gera HortaHostil.apk (o jogo da pasta pwa/ vai dentro do app)
 #   ./build.sh sim    -> o robô joga sozinho para testar a lógica (precisa do Node.js)
@@ -60,9 +60,10 @@ mkdir -p "$BUILD/gen" "$BUILD/classes" "$BUILD/dex" "$BUILD/signer"
 # ---------------------------------------------------------------------------
 # 2) Recursos (manifest, icone, textos)
 # ---------------------------------------------------------------------------
-step "Copiando o jogo (pasta pwa/) para dentro do app"
+step "Gerando a versão publicada do jogo (JavaScript minificado) e colocando dentro do app"
+bash "$ROOT/tools/build-web.sh" "$BUILD/web"
 mkdir -p "$BUILD/assets/www"
-(cd "$ROOT/pwa" && cp -r index.html manifest.webmanifest js icons "$BUILD/assets/www/")
+(cd "$BUILD/web" && cp -r index.html manifest.webmanifest js icons "$BUILD/assets/www/")
 
 step "Compilando recursos (aapt2)"
 "$AAPT2" compile --dir "$SRC/res" -o "$BUILD/res.zip"
