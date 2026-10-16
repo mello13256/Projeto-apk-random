@@ -22,6 +22,26 @@ O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ n
 Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
 depois da primeira visita.
 
+## 🛡️ Versão 4.3: administrador do ranking
+
+A conta **Miguelito** pode **apagar** e **editar** (nome, onda, insetos, vitória) qualquer registro do ranking e do
+Desafio do Dia direto pelo jogo: no ranking, toque no jogador e use **✏️ Editar** ou **🗑️ Apagar** (apagar pede
+um segundo toque pra confirmar).
+
+**Como é protegido:** esconder os botões não basta (qualquer um que leia o código poderia chamar a função), então
+quem decide é o servidor. Cada ação de administrador vai junto com uma "prova": a chave da conta do administrador
+(que só existe sabendo a senha) e a hora do servidor. As regras do Firebase comparam essa chave com a guardada em
+`admin/key`, que ninguém consegue ler. Uma prova antiga não serve de novo, e as validações normais (pontuação
+certa, vitória só na última onda) continuam valendo.
+
+**Configurar (uma vez):**
+1. Entre no jogo com a conta **Miguelito**, abra **👤 Conta** e toque em **🔑 Chave de administrador**. Copie a chave.
+2. No console do Firebase, em *Realtime Database → Dados*, crie o campo `admin` → `key` com essa chave (texto).
+3. Publique as regras novas do [`firebase-rules.json`](firebase-rules.json).
+
+Se um dia trocar a senha (criar a conta de novo), é só repetir o passo 1 e 2. Para tirar o poder de administrador,
+apague `admin/key`.
+
 ## 🔒 Versão 4.2: proteção do jogo e do ranking
 
 - **Licença:** o jogo é protegido por direitos autorais, com todos os direitos reservados (veja [`LICENSE`](LICENSE)).

@@ -9,7 +9,7 @@
           "score"
         ],
         "$id": {
-          ".write": "$diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child($diff).child('t').isNumber() && now - root.child('runs').child($id).child($diff).child('t').val() >= (newData.child('wave').val() - 1) * 12000",
+          ".write": "($diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child($diff).child('t').isNumber() && now - root.child('runs').child($id).child($diff).child('t').val() >= (newData.child('wave').val() - 1) * 12000) || (root.child('admin').child('key').isString() && newData.parent().parent().parent().child('adminProof').child('k').val() === root.child('admin').child('key').val() && newData.parent().parent().parent().child('adminProof').child('t').val() === now)",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
@@ -54,7 +54,7 @@
           "score"
         ],
         "$id": {
-          ".write": "$day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child('daily').child('t').isNumber() && now - root.child('runs').child($id).child('daily').child('t').val() >= (newData.child('wave').val() - 1) * 12000",
+          ".write": "($day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child('daily').child('t').isNumber() && now - root.child('runs').child($id).child('daily').child('t').val() >= (newData.child('wave').val() - 1) * 12000) || (root.child('admin').child('key').isString() && newData.parent().parent().parent().child('adminProof').child('k').val() === root.child('admin').child('key').val() && newData.parent().parent().parent().child('adminProof').child('t').val() === now)",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
@@ -104,6 +104,19 @@
             ".validate": false
           }
         }
+      }
+    },
+    "adminProof": {
+      ".write": "root.child('admin').child('key').isString() && newData.child('k').val() === root.child('admin').child('key').val() && newData.child('t').val() === now",
+      ".validate": "newData.hasChildren(['k', 't'])",
+      "k": {
+        ".validate": "newData.isString()"
+      },
+      "t": {
+        ".validate": "newData.isNumber()"
+      },
+      "$other": {
+        ".validate": false
       }
     },
     "rooms": {

@@ -570,7 +570,15 @@ class Ui {
       case 'UNREADY': this.mp.setReady(false); break;
       case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.loadRanking(this.difficulty); break;
       case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + RANK_TABS) % RANK_TABS); break;
-      case 'RANK_VIEW': this.rankView = (arg >= 100 ? (this.dailyRank || {}).entries : this.rank.entries || [])[arg % 100] || null; this.tipItem = null; break;
+      case 'RANK_VIEW':
+        this.rankView = ((arg >= 100 ? (this.dailyRank || {}).entries : this.rank.entries) || [])[arg % 100] || null;
+        this.rankViewBase = arg >= 100 ? 'daily/' + (this.dailyRank || {}).date
+          : this.rank.diff === RANK_DAILY ? 'daily/' + dailyChallenge().date : 'ranking/d' + this.rank.diff;
+        this.tipItem = null; this.admDelArm = 0;
+        break;
+      case 'ADM_DEL': this.adminDelete(); break;
+      case 'ADM_EDIT': this.adminEdit(); break;
+      case 'ADM_KEY': this.showAdminKey(); break;
       case 'RANK_CLOSE': this.rankView = null; break;
       case 'DAILY': this.rankView = null; this.openDaily(); break;
       case 'DAILY_START': this.newUnlocks = ''; this.startDaily(); break;
@@ -723,10 +731,12 @@ class Ui {
     if (this.deferred) this.deferred();
     if (this.toastTime > 0 && this.toast) {
       const a = Math.min(1, this.toastTime * 3);
-      const w = this.measure(this.toast, 26) + 48;
+      let size = 26;
+      while (size > 14 && this.measure(this.toast, size) > this.vw - 88) size--; // cabe na tela
+      const w = this.measure(this.toast, size) + 48;
       ctx.globalAlpha = a;
       this.roundRect(this.vw / 2 - w / 2, VH - 205, w, 50, 16, 'rgba(20,20,20,0.9)', 'rgba(255,230,120,0.5)', 2);
-      this.text(this.toast, this.vw / 2, VH - 171, 26, '#FFE678', 'center');
+      this.text(this.toast, this.vw / 2, VH - 171, size, '#FFE678', 'center');
       ctx.globalAlpha = 1;
     }
     ctx.restore();
@@ -789,7 +799,7 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('© 2026 mello13256 • todos os direitos reservados • v4.2', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('© 2026 mello13256 • todos os direitos reservados • v4.3', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 

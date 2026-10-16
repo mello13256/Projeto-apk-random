@@ -78,6 +78,19 @@ const Ranking = {
     if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
   },
 
+  /**
+   * Administrador: apaga (value = null) ou troca um registro do ranking. No mesmo pedido vai a
+   * "prova" com a chave da conta do administrador e a hora do servidor; as regras do Firebase só
+   * aceitam se a chave for a que está guardada em admin/key (que ninguém consegue ler).
+   * path = 'ranking/d1/<id>' ou 'daily/AAAA-MM-DD/<id>'.
+   */
+  async adminWrite(path, value, adminKey) {
+    const url = RANKING_URL.replace(/\/ranking$/, '') + '/.json';
+    const body = { [path]: value, adminProof: { k: adminKey, t: { '.sv': 'timestamp' } } };
+    const res = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+  },
+
   async postBestAt(base, playerId, entry) {
     const url = `${base}/${playerId}.json`;
     const score = this.scoreOf(entry.won, entry.wave, entry.kills);

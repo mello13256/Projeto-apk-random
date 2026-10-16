@@ -50,7 +50,7 @@ function sha256(str) {
   return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-const GAME_VERSION = '4.2';
+const GAME_VERSION = '4.3';
 const PROGRESS_KEYS = ['bestWave', 'wins', 'totalKills', 'bestDiffWon', 'gamesPlayed', 'totalSeeds', 'bestEndless',
   'bossKills', 'eliteKills', 'itemsBought', 'dailyDays'];
 
@@ -345,6 +345,7 @@ const CommunityUi = {
       this.button(cx + 10, 390, bw, 76, 'Sair da conta', 'ACC_LOGOUT', 0, C.RED, true, 28);
     }
     this.text('Sistema simples (sem e-mail): guarde bem sua senha.', cx, 530, 19, 'rgba(255,255,255,0.6)', 'center');
+    if (this.isAdmin()) this.button(cx - 190, 556, 380, 60, '🔑 Chave de administrador', 'ADM_KEY', 0, '#8E6A12', true, 24);
     this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
   },
 

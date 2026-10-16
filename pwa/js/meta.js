@@ -10,7 +10,86 @@ function dailyTimeLeft() {
   return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
 }
 
+/** Contas que veem os botões de administrador no ranking (quem manda de verdade é a chave em admin/key no Firebase). */
+const ADMIN_NAMES = ['miguelito'];
+
 const MetaUi = {
+  // ------------------------------------------------------------------
+  // Administrador do ranking
+  // ------------------------------------------------------------------
+
+  isAdmin() { const u = this.account && this.account.user; return !!u && ADMIN_NAMES.includes(u.name.toLowerCase()); },
+
+  adminError(e) {
+    if (e && e.status === 401) return 'Recusado: confira a chave admin/key no Firebase (e se vitória está na última onda).';
+    return navigator.onLine === false ? 'Sem internet.' : 'Não deu pra falar com o servidor.';
+  },
+
+  /** Recarrega a lista que está aberta (ranking ou Desafio do Dia). */
+  reloadRankLists() {
+    if (this.game.state === 'DAILY') this.loadDailyRank();
+    else this.loadRanking(this.rank.diff);
+  },
+
+  adminDelete() {
+    const e = this.rankView;
+    if (!e || !this.isAdmin()) return;
+    if (!(this.admDelArm > performance.now() - 3000)) { // primeiro toque só arma
+      this.admDelArm = performance.now();
+      this.showToast('Toque de novo em Apagar pra confirmar', 3);
+      return;
+    }
+    this.admDelArm = 0;
+    Ranking.adminWrite(this.rankViewBase + '/' + e.id, null, this.account.user.key).then(() => {
+      this.showToast('🗑️ ' + e.name + ' foi removido do ranking', 3);
+      this.rankView = null;
+      this.reloadRankLists();
+    }, (err) => this.showToast(this.adminError(err), 5));
+  },
+
+  adminEdit() {
+    const e = this.rankView;
+    if (!e || !this.isAdmin()) return;
+    openForm({
+      title: '✏️ Editar ' + e.name, submit: 'Salvar',
+      fields: [
+        { id: 'name', label: 'Nome:', value: e.name, maxLength: 16, clean: (v) => v.replace(/\s+/g, ' ').trim() },
+        { id: 'wave', label: 'Onda:', value: String(e.wave), maxLength: 4 },
+        { id: 'kills', label: 'Insetos derrotados:', value: String(e.kills), maxLength: 6 },
+        { id: 'won', label: 'Venceu?', type: 'select', options: [['nao', 'Não'], ['sim', 'Sim']], value: e.won ? 'sim' : 'nao' },
+        { id: 'n', type: 'note', label: 'A pontuação é recalculada sozinha. Vitória só vale na última onda.' },
+      ],
+      check: (v) => {
+        if (!Ranking.validName(v.name)) return 'Nome: de 2 a 16 letras ou números.';
+        if (!/^\d{1,4}$/.test(v.wave) || +v.wave < 1) return 'Onda: um número de 1 a 9999.';
+        if (!/^\d{1,6}$/.test(v.kills)) return 'Insetos: um número de 0 a 999999.';
+        return '';
+      },
+    }, (v) => {
+      const won = v.won === 'sim', wave = +v.wave, kills = +v.kills;
+      const entry = { name: v.name, character: e.character, wave, won, kills, level: e.level || 1,
+        platform: e.platform === 'android' ? 'android' : 'web', score: Ranking.scoreOf(won, wave, kills), createdAt: e.createdAt || Date.now() - 60000 };
+      if (typeof e.b === 'string') entry.b = e.b;
+      return Ranking.adminWrite(this.rankViewBase + '/' + e.id, entry, this.account.user.key).then(() => {
+        this.showToast('✏️ Registro atualizado', 3);
+        this.rankView = Object.assign({ id: e.id }, entry);
+        this.reloadRankLists();
+      }, (err) => { throw new Error(this.adminError(err)); });
+    });
+  },
+
+  /** Mostra a chave da conta de administrador pra colar no Firebase (admin/key). */
+  showAdminKey() {
+    if (!this.isAdmin()) return;
+    openForm({
+      title: '🔑 Chave de administrador', submit: 'Fechar',
+      fields: [
+        { id: 'k', label: 'Copie esta chave:', value: this.account.user.key, maxLength: 64 },
+        { id: 'n', type: 'note', label: 'No console do Firebase (Realtime Database → Dados), crie o campo admin → key com esta chave. Não mostre pra ninguém: quem tiver a chave pode mexer no ranking.' },
+      ],
+    }, () => {});
+  },
+
   // ------------------------------------------------------------------
   // Desafio do Dia
   // ------------------------------------------------------------------
@@ -148,7 +227,15 @@ const MetaUi = {
       const act = SET_KEYS.filter((k) => counts[k] >= 3).map((k) => SETS[k].icon + ' ' + SETS[k].name + ' ' + (counts[k] >= 5 ? 'II' : 'I'));
       if (act.length) this.textFit('Conjuntos: ' + act.join('  •  '), x + w / 2, y + h - 84, 18, w - 40, '#FFE08A');
     }
-    this.button(x + w / 2 - 100, y + h - 70, 200, 56, 'Fechar', 'RANK_CLOSE', 0, C.GRAY, true, 24);
+    if (this.isAdmin()) {
+      const armed = this.admDelArm > performance.now() - 3000;
+      this.button(x + 30, y + h - 70, 200, 56, '✏️ Editar', 'ADM_EDIT', 0, C.BLUE, true, 24);
+      this.button(x + w / 2 - 100, y + h - 70, 200, 56, armed ? 'Confirmar?' : '🗑️ Apagar', 'ADM_DEL', 0, armed ? '#B71C1C' : C.RED, true, 24);
+      this.button(x + w - 230, y + h - 70, 200, 56, 'Fechar', 'RANK_CLOSE', 0, C.GRAY, true, 24);
+      this.text('🛡️ administrador', x + w - 24, y + 36, 18, C.GOLD, 'right');
+    } else {
+      this.button(x + w / 2 - 100, y + h - 70, 200, 56, 'Fechar', 'RANK_CLOSE', 0, C.GRAY, true, 24);
+    }
   },
 
   // ------------------------------------------------------------------
