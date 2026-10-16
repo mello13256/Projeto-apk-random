@@ -799,7 +799,7 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('© 2026 mello13256 • todos os direitos reservados • v4.3', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('© 2026 mello13256 • todos os direitos reservados • v4.3.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -1828,6 +1828,11 @@ class Ui {
     const dots = '.'.repeat(1 + Math.floor(this.time * 2) % 3);
     this.textFit(names.length ? 'Esperando: ' + names.join(', ') + dots : 'Abrindo a arena' + dots, this.vw / 2, y + 125, 24, w - 40, '#FFFFFF');
     this.wrapped('Na arena, 2 atributos sorteados de cada um são trocados com os de outro jogador. A arena vai fechando: fique dentro do círculo!', this.vw / 2, y + 175, w - 60, 19, '#CFE3B8', 'center');
+    // se demorar demais (internet ruim, alguém saiu), dá pra sair em vez de ficar preso
+    if (!names.length && performance.now() - (this.mp.pvpReadyAt || performance.now()) > 20000) {
+      this.text('Está demorando... confira a internet de todo mundo.', this.vw / 2, y + h - 74, 18, '#FFC870', 'center');
+      this.button(this.vw / 2 - 120, y + h - 62, 240, 50, 'Sair da sala', 'QUIT', 0, C.GRAY, true, 22);
+    }
   }
 
   /** Multiplayer: esperando os outros terminarem a loja. */

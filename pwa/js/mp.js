@@ -479,7 +479,7 @@ class Multiplayer {
     this.ready = false; this.readyMap.clear(); this.readySlots = [];
     this.breakWave = 0; this.enemyMap.clear();
     this.lastSnapAt = 0; this.placeMe = true;
-    this.phase = ''; this.pvpReadySent = false; this.duelData.clear(); this.swapInfo = null; this.myStatus = '';
+    this.phase = ''; this.pvpReadySent = false; this.pvpReadyMsg = ''; this.duelData.clear(); this.swapInfo = null; this.myStatus = '';
     for (const r of this.roster) r.pv = '';
     this.lastShots = 0;
     if (s.mode === 'pvp') { this.beginPvpPrep(s); return; }
@@ -523,16 +523,50 @@ class Multiplayer {
     const g = this.game;
     if (this.phase !== 'prep' || this.pvpReadySent || !g.prepFinished()) return;
     this.pvpReadySent = true;
+    this.pvpReadyAt = this.pvpCheckAt = now();
     const data = playerToData(g.player);
     if (this.isHost()) {
       this.duelData.set(this.pid, data);
       this.tryStartDuel();
     } else {
-      const msg = JSON.stringify({ gid: this.gid, pvp: 1, d: data });
-      if (this.hostPeer) this.hostPeer.send('r' + msg, true);
-      Fb.patch(this.path('g/' + this.pid), { rd: msg }).catch(() => {});
+      this.pvpReadyMsg = JSON.stringify({ gid: this.gid, pvp: 1, d: data });
+      this.sendPvpReadyMsg();
     }
     this.sendPvStatus();
+  }
+
+  sendPvpReadyMsg() {
+    const msg = this.pvpReadyMsg;
+    if (!msg) return;
+    if (this.hostPeer && this.hostPeer.isOpen()) this.hostPeer.send('r' + msg, true);
+    Fb.patch(this.path('g/' + this.pid), { rd: msg }).catch(() => {});
+  }
+
+  /**
+   * Preparação do PvP: o "pronto pro duelo" pode se perder (internet oscilando, conexão pelo servidor).
+   * Em vez de esperar pra sempre, de tempos em tempos o anfitrião confere os dados que faltam
+   * e o convidado reenvia o dele e confere se a arena já abriu.
+   */
+  pvpPrepTick(t) {
+    if (!this.pvpReadySent || t - (this.pvpCheckAt || 0) < 3000) return;
+    this.pvpCheckAt = t;
+    if (this.isHost()) {
+      const all = (this.mirror && this.mirror.data) || {};
+      for (const r of this.roster) {
+        if (r.host || this.duelData.has(r.id)) continue;
+        const local = all[r.id] && all[r.id].rd;
+        if (typeof local === 'string') this.onReadyMsg(r.id, local);
+        if (this.phase === 'prep' && !this.duelData.has(r.id) && r.pv && r.pv.split('|')[1] === '2') {
+          Fb.get(this.path('g/' + r.id + '/rd')).then((v) => { if (typeof v === 'string') this.onReadyMsg(r.id, v); }, () => {});
+        }
+      }
+      this.tryStartDuel();
+    } else {
+      this.sendPvpReadyMsg();
+      Fb.get(this.path('h/duel')).then((v) => {
+        if (typeof v === 'string' && v !== this.duelSeen && this.phase === 'prep') { this.duelSeen = v; this.onDuel(v); }
+      }, () => {});
+    }
   }
 
   /** Quem ainda está se preparando (nome e rodada). */
@@ -572,10 +606,18 @@ class Multiplayer {
     if (!d || d.gid !== this.gid || this.phase === 'duel' || !Array.isArray(d.list)) return;
     if (!d.list.some((x) => x.id === this.pid)) return;
     const g = this.game;
+    try {
+      g.newDuel(d.list, this.pid, d.diff);
+    } catch (e) { // dados estragados: não trava a tela, avisa e deixa tentar de novo
+      console.error(e);
+      this.ui.showToast('Não deu pra abrir a arena. Tentando de novo...', 3);
+      this.duelSeen = '';
+      return;
+    }
     this.phase = 'duel';
+    this.pvpReadyMsg = '';
     this.ready = false;
     this.seq = 0; this.lastQ = -1; this.sendAcc = 1; this.placeMe = true; this.lastSnapAt = 0;
-    g.newDuel(d.list, this.pid, d.diff);
     g.countdown = 6; // 3 s mostrando a troca de atributos + 3, 2, 1
     this.swapInfo = {
       stats: d.swap,
@@ -684,7 +726,7 @@ class Multiplayer {
         if (t - r.seenAt > GUEST_TIMEOUT) this.dropGuest(r.id, r.name + ' perdeu a conexão.');
       }
       if (!this.inGame) return;
-      if (this.phase === 'prep') { this.sendPvStatus(); return; }
+      if (this.phase === 'prep') { this.sendPvStatus(); this.pvpPrepTick(t); return; }
       if (g.state === 'SHOP') this.tryNextWave();
       const relay = this.roster.some((r) => !r.host && !r.conn);
       const playing = g.state === 'PLAYING';
@@ -705,7 +747,7 @@ class Multiplayer {
         this.leave('Não deu pra entrar: a sala está cheia ou a partida já começou.');
         return;
       }
-      if (this.phase === 'prep') { this.sendPvStatus(); return; }
+      if (this.phase === 'prep') { this.sendPvStatus(); this.pvpPrepTick(t); return; }
       if (this.inGame && g.state === 'PLAYING') {
         const direct = !!(this.hostPeer && this.hostPeer.isOpen());
         this.sendAcc += dt;
