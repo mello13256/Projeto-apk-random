@@ -18,7 +18,8 @@ const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const SLOT_COLORS = ['#4FC3F7', '#FF8A65', '#CE93D8', '#FFD54F'];
 const ENEMY_DEFS = Object.values(E);
 const HOST_TIMEOUT = 25000, GUEST_TIMEOUT = 25000;
-const PH = 28; // campos fixos de cada jogador na foto da arena (depois vêm as armas, 5 números cada)
+const MP_VERSION = 2; // salas de versões diferentes não se misturam
+const PH = 31; // campos fixos de cada jogador na foto da arena (depois vêm as armas, 5 números cada)
 // Atributos que podem ser trocados no duelo (sorte e colheita não fazem diferença na arena)
 const SWAP_STATS = [Stat.HP, Stat.REGEN, Stat.LIFESTEAL, Stat.DAMAGE, Stat.MELEE, Stat.RANGED, Stat.ELEMENTAL,
   Stat.ATK_SPEED, Stat.CRIT, Stat.RANGE, Stat.ARMOR, Stat.DODGE, Stat.SPEED];
@@ -74,6 +75,8 @@ class Multiplayer {
     this.lastShots = 0;
     this.ended = false;
     this.mode = 'coop';          // 'coop' ou 'pvp' (escolhido pelo anfitrião na sala)
+    this.m3 = false;             // partida em 3D (escolhido pelo anfitrião)
+    this.skillSeq = 0; this.parrySeq = 0; // convidado: quantas vezes apertou habilidade/parry
     this.phase = '';             // PvP: 'prep' (15 rodadas), 'duel' (arena)
     this.pvpReadySent = false;   // já mandei meus dados pro duelo
     this.duelData = new Map();   // anfitrião: id -> dados do jogador pronto pro duelo
@@ -116,7 +119,7 @@ class Multiplayer {
       this.roster = [{ id: this.pid, name, char, ready: true, conn: 1, host: true }];
       await Fb.put(this.path(), {
         h: {
-          meta: { host: this.pid, diff, st: 'lobby', ts: SERVER_TIME, hb: Date.now(), v: 1, mode: this.mode },
+          meta: { host: this.pid, diff, st: 'lobby', ts: SERVER_TIME, hb: Date.now(), v: MP_VERSION, mode: this.mode, m3: !!this.m3 },
           roster: this.rosterData(),
         },
       });
@@ -142,6 +145,7 @@ class Multiplayer {
       const h = await Fb.get('rooms/' + code + '/h/meta');
       if (!h || h.st === 'closed') throw new Error('Sala ' + code + ' não encontrada. Confira o código.');
       if (h.st !== 'lobby') throw new Error('A partida dessa sala já começou.');
+      if ((h.v | 0) !== MP_VERSION) throw new Error('Essa sala é de outra versão do jogo. Atualizem os dois aparelhos.');
       const roster = (await Fb.get('rooms/' + code + '/h/roster')) || {};
       if (Object.keys(roster).length >= MP_MAX) throw new Error('A sala ' + code + ' está cheia (máximo ' + MP_MAX + ').');
       this.diff = h.diff | 0;
@@ -242,6 +246,12 @@ class Multiplayer {
     if (!this.isHost()) return;
     this.diff = d;
     Fb.patch(this.path('h/meta'), { diff: d }).catch(() => {});
+  }
+
+  setM3(on) {
+    if (!this.isHost()) return;
+    this.m3 = !!on;
+    Fb.patch(this.path('h/meta'), { m3: this.m3 }).catch(() => {});
   }
 
   setMode(m) {
@@ -379,7 +389,13 @@ class Multiplayer {
     p.wantFire = !!(d.f & 4);
     p.aimAng = (d.a | 0) / 100;
     p.lookX = (d.lx | 0) / 100; p.lookY = (d.ly | 0) / 100;
-    if (d.f & 8 && p.kind === 'dash') g.tryDash(p); // Alface: dash do convidado (o dano é do anfitrião)
+    // habilidade e parry: contadores (se uma mensagem se perder, a próxima ainda avisa)
+    if ((d.sk | 0) > (r.lastSk || 0)) { r.lastSk = d.sk | 0; g.useActive(p); }
+    if ((d.pa | 0) > (r.lastPa || 0)) {
+      r.lastPa = d.pa | 0;
+      g.tryParry(p);
+      if (p.parryT > 0) p.parryT += Math.min(0.15, r.ping / 2000); // compensa o atraso da internet
+    }
   }
 
   /** Convidado terminou (ou desfez) a loja. */
@@ -411,6 +427,7 @@ class Multiplayer {
     if (meta.hb !== this.hostHb) { this.hostHb = meta.hb; this.hostSeenAt = now(); }
     this.diff = meta.diff | 0;
     this.mode = meta.mode === 'pvp' ? 'pvp' : 'coop';
+    this.m3 = !!meta.m3;
     if (path === '/snap') { this.onSnap(value); return; }
     // lista de jogadores
     const ro = data.roster || {};
@@ -464,7 +481,7 @@ class Multiplayer {
 
   startGame() {
     if (!this.canStart()) return false;
-    const s = { gid: Date.now(), diff: this.diff, mode: this.mode, list: this.roster.map((r) => ({ id: r.id, name: r.name, char: r.char })) };
+    const s = { gid: Date.now(), diff: this.diff, mode: this.mode, m3: !!this.m3, list: this.roster.map((r) => ({ id: r.id, name: r.name, char: r.char })) };
     const str = JSON.stringify(s);
     Fb.put(this.path('h/start'), str).then(() => Fb.patch(this.path('h/meta'), { st: 'game' })).catch(() => {});
     this.beginGame(s);
@@ -482,6 +499,9 @@ class Multiplayer {
     this.phase = ''; this.pvpReadySent = false; this.pvpReadyMsg = ''; this.duelData.clear(); this.swapInfo = null; this.myStatus = '';
     for (const r of this.roster) r.pv = '';
     this.lastShots = 0;
+    g.mode3d = !!s.m3;
+    this.skillSeq = 0; this.parrySeq = 0;
+    for (const r of this.roster) { r.lastSk = 0; r.lastPa = 0; }
     if (s.mode === 'pvp') { this.beginPvpPrep(s); return; }
     g.newCoopRun(s.list, this.pid, s.diff);
     if (this.isHost()) {
@@ -768,10 +788,10 @@ class Multiplayer {
     if (this.sentAt.size > 80) this.sentAt.delete(this.sentAt.keys().next().value);
     const s = JSON.stringify({
       gid: this.gid, w: g.wave, q, tm: Math.round(t), pg: Math.round(this.ping), x: Math.round(p.x), y: Math.round(p.y),
-      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0) | (g.input.fire ? 4 : 0) | (this.dashSend > 0 ? 8 : 0), a: Math.round((g.input.aimAng || 0) * 100),
+      f: (p.facingLeft ? 1 : 0) | (p.moving ? 2 : 0) | (g.input.fire ? 4 : 0), a: Math.round((g.input.aimAng || 0) * 100),
+      sk: this.skillSeq, pa: this.parrySeq,
       lx: Math.round(p.lookX * 100), ly: Math.round(p.lookY * 100),
     });
-    if (this.dashSend > 0) this.dashSend--;
     if (direct && this.hostPeer.send('i' + s, false)) return;
     this.relayPut('g/' + this.pid + '/in', s);
   }
@@ -820,6 +840,10 @@ class Multiplayer {
       // classes da 4.0: crescimento, roleta, estado (renascer/dash/espelho), recargas, elemento e direção do dash
       a.push(R(p.growth * 100), p.roulette, (p.revive ? 1 : 0) | (p.dashT > 0 ? 2 : 0) | (p.mirrorCd > 0 ? 4 : 0),
         R(Math.max(0, p.shieldCd) * 10), R(Math.max(0, p.dashCd) * 10), R(p.elemT * 10) % 1500, R(p.dashX * 100), R(p.dashY * 100));
+      // 5.0: recarga da habilidade, efeitos ligados e recarga do parry
+      const fx5 = (p.webT > 0 ? 1 : 0) | (p.wallT > 0 ? 2 : 0) | (p.rollT > 0 ? 4 : 0) | (p.ksT > 0 ? 8 : 0) | (p.smokeT > 0 ? 16 : 0) | (p.popT > 0 ? 32 : 0)
+        | (p.fusionT > 0 ? 64 : 0) | (p.odT > 0 ? 128 : 0) | (p.swarmT > 0 ? 256 : 0) | (p.parryT > 0 ? 512 : 0) | (p.parryFx > 0 ? 1024 : 0);
+      a.push(R(Math.max(0, p.activeCd || 0) * 10), fx5, R(Math.max(0, p.parryCd || 0) * 10));
       for (const w of p.weapons) {
         const ang = w.attacking() ? Math.atan2(w.dirY, w.dirX) : w.angle;
         a.push(ALL_WEAPONS.indexOf(w.def), w.tier, R(ang * 100), R(w.tipX - p.x), R(w.tipY - p.y));
@@ -839,7 +863,9 @@ class Multiplayer {
         const red = (en.def.ai === AI_CHARGE && en.aiState === 1) || ((en.def.ai === AI_BOSS_ANT || en.def.ai === AI_BOSS_BEETLE) && en.aiState === 2);
         e.push(en.id, ENEMY_DEFS.indexOf(en.def), R(en.x), R(en.y), R(1000 * Math.max(0, en.hp) / en.maxHp),
           (en.elite ? 1 : 0) | (en.facingLeft ? 2 : 0) | (en.flash > 0 ? 4 : 0) | (en.burnTime > 0 ? 8 : 0) | (en.slowTime > 0 ? 16 : 0) | (red ? 32 : 0) |
-          (en.fear > 0 ? 64 : 0) | (en.freeze > 0 ? 128 : 0) | (en.acid > 0 ? 256 : 0));
+          (en.fear > 0 ? 64 : 0) | (en.freeze > 0 ? 128 : 0) | (en.acid > 0 ? 256 : 0) |
+          (en.under ? 512 : 0) | (en.stun > 0 ? 1024 : 0) | (en.buffT > 0 ? 2048 : 0) | (en.def.ai === AI_KAMIKAZE && en.aiState === 1 ? 4096 : 0),
+          en.def.ai === AI_SHIELDED ? R((en.fa || 0) * 100) : R(en.h || 0));
       }
       o.e = e;
       const b = [];
@@ -851,8 +877,14 @@ class Multiplayer {
       }
       o.b = b;
       const eb = [];
-      for (const x of g.enemyBullets) if (!x.dead) eb.push(R(x.x), R(x.y), R(x.vx / 10), R(x.vy / 10));
+      for (const x of g.enemyBullets) if (!x.dead) eb.push(R(x.x), R(x.y), R(x.vx / 10), R(x.vy / 10), x.web ? 1 : 0);
       o.eb = eb;
+      const zn = [];
+      for (const z of g.zones) zn.push(z.kind === 'web' ? 0 : z.kind === 'spore' ? 1 : 2, R(z.x), R(z.y), R(z.r), R(z.t * 10));
+      o.zn = zn;
+      const mk = [];
+      for (const m of g.marks) mk.push(R(m.x), R(m.y), R(m.r), R(m.t * 10), R(m.max * 10), m.bad ? 1 : 0);
+      o.mk = mk;
       const pk = [];
       for (const x of g.pickups) if (!x.dead) pk.push(R(x.x), R(x.y), x.type * 2 + (x.value > 1 ? 1 : 0));
       o.pk = pk;
@@ -994,6 +1026,11 @@ class Multiplayer {
       if (p !== me) { p.dashT = a[22] & 2 ? 0.1 : 0; p.dashCd = a[24] / 10; p.dashX = a[26] / 100; p.dashY = a[27] / 100; }
       else if (!(me.dashT > 0)) me.dashCd = Math.min(me.dashCd, a[24] / 10);
       p.elemT = a[25] / 10;
+      p.activeCd = a[28] / 10; p.parryCd = a[30] / 10;
+      const fx5 = a[29] | 0, on = (bit) => (fx5 & bit ? 0.2 : 0);
+      p.webT = on(1); p.wallT = on(2); p.rollT = on(4); p.ksT = on(8); p.smokeT = on(16); p.popT = on(32);
+      p.fusionT = on(64); p.odT = on(128); p.swarmT = on(256); p.parryT = on(512);
+      if (fx5 & 1024 && !(p.parryFx > 0)) p.parryFx = 0.35; else if (!(fx5 & 1024)) p.parryFx = Math.min(p.parryFx || 0, 0.2);
       // armas (para desenhar)
       const nw = Math.floor((a.length - PH) / 5);
       if (p.weapons.length !== nw) p.weapons.length = Math.min(p.weapons.length, nw);
@@ -1025,7 +1062,7 @@ class Multiplayer {
     const e = o.e || [];
     g.enemies = [];
     g.boss = null;
-    for (let i = 0; i + 5 < e.length; i += 6) {
+    for (let i = 0; i + 6 < e.length; i += 7) {
       const id = e[i], def = ENEMY_DEFS[e[i + 1]];
       if (!def) continue;
       let en = this.enemyMap.get(id);
@@ -1044,6 +1081,10 @@ class Multiplayer {
       en.slowTime = f & 16 ? 1 : 0;
       en.aiState = f & 32 ? (def.ai === AI_CHARGE ? 1 : 2) : 0;
       en.fear = f & 64 ? 1 : 0; en.freeze = f & 128 ? 1 : 0; en.acid = f & 256 ? 1 : 0;
+      en.under = !!(f & 512); en.stun = f & 1024 ? 1 : 0; en.buffT = f & 2048 ? 1 : 0;
+      if (def.ai === AI_KAMIKAZE) en.aiState = f & 4096 ? 1 : 0;
+      if (def.ai === AI_SHIELDED) en.fa = e[i + 6] / 100; else en.h = e[i + 6];
+      g.noteTip(def);
       map.set(id, en);
       g.enemies.push(en);
       if (id === o.bs) g.boss = en;
@@ -1059,9 +1100,15 @@ class Multiplayer {
     }
     const eb = o.eb || [];
     g.enemyBullets = [];
-    for (let i = 0; i + 3 < eb.length; i += 4) {
-      g.enemyBullets.push({ x: eb[i], y: eb[i + 1], vx: eb[i + 2] * 10, vy: eb[i + 3] * 10, radius: 9, dead: false });
+    for (let i = 0; i + 4 < eb.length; i += 5) {
+      g.enemyBullets.push({ x: eb[i], y: eb[i + 1], vx: eb[i + 2] * 10, vy: eb[i + 3] * 10, radius: eb[i + 4] ? 12 : 9, web: !!eb[i + 4], dead: false });
     }
+    const zn = o.zn || [];
+    g.zones = [];
+    for (let i = 0; i + 4 < zn.length; i += 5) g.zones.push({ kind: ['web', 'spore', 'stink'][zn[i]] || 'stink', x: zn[i + 1], y: zn[i + 2], r: zn[i + 3], t: zn[i + 4] / 10, tick: 1 });
+    const mk = o.mk || [];
+    g.marks = [];
+    for (let i = 0; i + 5 < mk.length; i += 6) g.marks.push({ x: mk[i], y: mk[i + 1], r: mk[i + 2], t: mk[i + 3] / 10, max: mk[i + 4] / 10 || 1, bad: !!mk[i + 5] });
     const pk = o.pk || [];
     g.pickups = [];
     for (let i = 0; i + 2 < pk.length; i += 3) {
@@ -1100,16 +1147,18 @@ class Multiplayer {
     if (me.alive && !this.placeMe) g.movePlayer(me, dt, jx, jy);
     if (me.iframes > 0) me.iframes -= dt;
     me.aimAng = g.input.aimAng; me.wantFire = !!g.input.fire;
-    if (me.kind === 'dash') { // Alface: o dash anda na hora aqui; o anfitrião faz o dano
-      if (me.dashCd > 0) me.dashCd -= dt;
-      if (me.dashT > 0) me.dashT -= dt;
-      if (g.input.dash && me.alive && me.dashCd <= 0 && me.dashT <= 0) {
+    if (me.activeCd > 0) me.activeCd -= dt;
+    if (g.input.skill && me.alive && me.character.active && !(me.activeCd > 0)) {
+      this.skillSeq++; // o anfitrião faz a habilidade
+      if (me.kind === 'dash' && me.dashT <= 0) { // Alface: o dash anda na hora aqui; o anfitrião faz o dano
         const len = Math.hypot(me.lookX, me.lookY) || 1;
-        me.dashX = me.lookX / len; me.dashY = me.lookY / len; me.dashT = 0.2; me.dashCd = 2.5;
-        this.dashSend = 3; // manda nos próximos envios (se um se perder, outro chega)
+        me.dashX = me.lookX / len; me.dashY = me.lookY / len; me.dashT = 0.2;
       }
-      g.input.dash = false;
     }
+    if (g.input.parry && g.mode3d && me.alive && !(me.parryCd > 0)) { this.parrySeq++; me.parryCd = 0.3; }
+    if (me.parryCd > 0) me.parryCd -= dt;
+    if (me.kind === 'dash' && me.dashT > 0) me.dashT -= dt;
+    for (const m of g.marks) m.t = Math.max(0, m.t - dt);
     if (me.kind === 'laser') me.laser.on = me.alive && me.wantFire && !me.laser.over && !g.ending && !(g.zone && g.countdown > 0);
     if (g.zone && g.countdown > 0) g.countdown -= dt;
     for (const p of g.players) {

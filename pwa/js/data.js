@@ -74,9 +74,13 @@ const ALL_WEAPONS = WEAPONS.concat([W_LASER]);
 
 // Efeitos especiais dos itens
 const SP_MAGNET = 0, SP_BOOM = 1, SP_THORNS = 2, SP_CRATE = 3, SP_FRUIT = 4;
-const SP_EXECUTE = 5, SP_SHIELD = 6, SP_FREEZE = 7, SP_COUNT = 8; // novos na 4.0
+const SP_EXECUTE = 5, SP_SHIELD = 6, SP_FREEZE = 7; // novos na 4.0
+// novos na 5.0: recarga da habilidade ativa, janela do parry (3D), choque em cadeia, cura no crítico,
+// dano em elites e chefões, velocidade ao matar e atordoar
+const SP_HASTE = 8, SP_PARRY = 9, SP_CHAIN = 10, SP_CRITHEAL = 11, SP_ELITE = 12, SP_KILLSPEED = 13, SP_STUN = 14, SP_COUNT = 15;
 // limites dos efeitos especiais (acima disso não ajuda mais)
 const SP_CAP_FREEZE = 30, SP_CAP_EXECUTE = 20, SP_CAP_SHIELD = 60;
+const SP_CAP_HASTE = 50, SP_CAP_PARRY = 100, SP_CAP_CHAIN = 40, SP_CAP_CRITHEAL = 25, SP_CAP_ELITE = 100, SP_CAP_KILLSPEED = 40, SP_CAP_STUN = 25;
 function item(name, icon, tier, ...mods) { return { name, icon, tier, mods, special: -1, specialValue: 0, specialText: '' }; }
 function sp(it, special, value, text) { return Object.assign(it, { special, specialValue: value, specialText: text }); }
 const S = Stat;
@@ -167,6 +171,87 @@ ITEMS.push(
   item('Disco Voador', '🛸', 3, S.RANGED, 6, S.RANGE, 50, S.ATK_SPEED, 8),
   item('Coração Pulsante', '🫀', 3, S.LIFESTEAL, 6, S.REGEN, 5, S.HP, 5),
 );
+const V4_ITEM_COUNT = ITEMS.length; // 76
+
+// Itens novos (versão 5.0): o dobro de novo
+ITEMS.push(
+  item('Pão', '🍞', 0, S.HP, 4, S.SPEED, -1),
+  item('Bússola', '🧭', 0, S.RANGE, 15, S.LUCK, 3),
+  item('Apito', '📯', 0, S.ATK_SPEED, 5, S.DODGE, 1),
+  item('Clipe', '📎', 0, S.CRIT, 2, S.ATK_SPEED, 3),
+  item('Lamparina', '🪔', 0, S.ELEMENTAL, 1, S.REGEN, 1),
+  sp(item('Cubo de Gelo', '🧊', 0, S.ARMOR, 1), SP_FREEZE, 4, '4% de chance de congelar ao acertar'),
+  item('Moeda', '🪙', 0, S.LUCK, 5, S.HARVEST, 2),
+  item('Feijão Mágico', '🫘', 0, S.HARVEST, 7, S.DAMAGE, -1),
+  item('Chá', '🍵', 0, S.REGEN, 2, S.ATK_SPEED, 2),
+  item('Faixa de Luta', '🎗️', 0, S.MELEE, 1, S.DODGE, 2),
+  item('Tesoura', '✂️', 0, S.MELEE, 1, S.CRIT, 2),
+  item('Bandeira', '🚩', 0, S.SPEED, 3, S.LUCK, 3),
+  sp(item('Ampulheta', '⏳', 0, S.ATK_SPEED, 2), SP_HASTE, 10, 'A habilidade ativa recarrega 10% mais rápido'),
+  sp(item('Escudo de Madeira', '🪵', 0, S.ARMOR, 1, S.HP, 2, S.SPEED, -2), SP_PARRY, 15, '(3D) Janela do parry 15% maior'),
+  sp(item('Pilha Fraca', '🪫', 0, S.ELEMENTAL, 1), SP_CHAIN, 6, '6% de chance de dar choque num inseto vizinho'),
+  item('Picolé', '🍦', 0, S.ELEMENTAL, 1, S.SPEED, 2),
+  item('Biscoito da Sorte', '🥠', 0, S.LUCK, 7, S.CRIT, 1),
+  sp(item('Prego', '📌', 0, S.ARMOR, 1), SP_THORNS, 4, 'Espinhos: 4 de dano em quem encosta'),
+  item('Corda', '🪢', 0, S.HP, 2, S.LIFESTEAL, 1),
+  item('Óculos de Mergulho', '🥽', 1, S.RANGE, 25, S.CRIT, 3),
+  item('Estetoscópio', '🩺', 1, S.REGEN, 3, S.HP, 3, S.DAMAGE, -2),
+  item('Termômetro', '🌡️', 1, S.ELEMENTAL, 2, S.ATK_SPEED, 4),
+  sp(item('Patins', '🛼', 1, S.SPEED, 8, S.ARMOR, -1), SP_KILLSPEED, 10, 'Ao matar: +10% de velocidade por 2 s'),
+  item('Kimono', '🥋', 1, S.MELEE, 3, S.ARMOR, 1),
+  sp(item('Taco', '🏏', 1, S.MELEE, 2, S.DAMAGE, 3), SP_STUN, 5, '5% de chance de atordoar ao acertar'),
+  sp(item('Raio na Garrafa', '🫙', 1, S.ELEMENTAL, 1), SP_CHAIN, 12, '12% de chance de dar choque num inseto vizinho'),
+  sp(item('Corrente', '⛓️', 1, S.MELEE, 1), SP_STUN, 8, '8% de chance de atordoar ao acertar'),
+  sp(item('Relógio', '⌚', 1, S.SPEED, 2), SP_HASTE, 15, 'A habilidade ativa recarrega 15% mais rápido'),
+  sp(item('Espelho de Bolso', '🪞', 1, S.DODGE, 2), SP_PARRY, 30, '(3D) Janela do parry 30% maior'),
+  item('Flor de Lótus', '🪷', 1, S.REGEN, 2, S.LUCK, 5, S.ELEMENTAL, 1),
+  item('Vinagre', '🍶', 1, S.LIFESTEAL, 2, S.ATK_SPEED, 4),
+  item('Mira Laser', '📍', 1, S.RANGED, 2, S.CRIT, 2),
+  item('Bola de Cristal', '🔮', 1, S.ELEMENTAL, 2, S.LUCK, 4),
+  item('Trator', '🚜', 1, S.HARVEST, 10, S.HP, 3, S.SPEED, -3),
+  item('Vara de Pescar', '🎣', 1, S.RANGE, 20, S.HARVEST, 4),
+  item('Casaco', '🧥', 1, S.ARMOR, 2, S.HP, 3, S.DODGE, -1),
+  sp(item('Troféu', '🏆', 1, S.DAMAGE, 2), SP_ELITE, 15, '+15% de dano em elites e chefões'),
+  sp(item('Ursinho Vampiro', '🧸', 1, S.LIFESTEAL, 1), SP_CRITHEAL, 6, 'Crítico tem 6% de chance de curar 1'),
+  item('Tambor', '🥁', 1, S.ATK_SPEED, 8, S.ARMOR, -1),
+  sp(item('Tempestade', '⛈️', 2, S.ELEMENTAL, 3), SP_CHAIN, 20, '20% de chance de dar choque num inseto vizinho'),
+  sp(item('Nunchaku', '🥢', 2, S.MELEE, 4, S.ATK_SPEED, 6), SP_STUN, 8, '8% de chance de atordoar ao acertar'),
+  item('Paraquedas', '🪂', 2, S.SPEED, 8, S.DODGE, 6, S.HP, -2),
+  sp(item('Ampulheta Dourada', '⌛', 2, S.ATK_SPEED, 4), SP_HASTE, 25, 'A habilidade ativa recarrega 25% mais rápido'),
+  sp(item('Escudo Refletor', '🔰', 2, S.ARMOR, 2), SP_PARRY, 50, '(3D) Janela do parry 50% maior'),
+  item('Coruja', '🦉', 2, S.CRIT, 6, S.RANGE, 25, S.RANGED, 1),
+  item('Tubarão', '🦈', 2, S.LIFESTEAL, 3, S.MELEE, 3, S.DAMAGE, 3),
+  sp(item('Medalha', '🏅', 2, S.CRIT, 3), SP_ELITE, 30, '+30% de dano em elites e chefões'),
+  item('Acampamento', '🏕️', 2, S.REGEN, 4, S.HP, 4, S.SPEED, -2),
+  item('Adaga', '🗡️', 2, S.CRIT, 6, S.MELEE, 2),
+  sp(item('Extintor', '🧯', 2, S.ARMOR, 2), SP_FREEZE, 12, '12% de chance de congelar ao acertar'),
+  item('Mochila', '🎒', 2, S.HARVEST, 12, S.LUCK, 6),
+  sp(item('Planta Carnívora', '🌺', 2, S.LIFESTEAL, 3, S.REGEN, 2), SP_THORNS, 10, 'Espinhos: 10 de dano em quem encosta'),
+  item('Antena', '📶', 2, S.RANGED, 3, S.RANGE, 35, S.MELEE, -2),
+  item('Pimentão', '🫑', 2, S.ELEMENTAL, 4, S.ATK_SPEED, 5, S.ARMOR, -1),
+  sp(item('Ninho', '🪹', 2, S.HARVEST, 5), SP_CRATE, 60, '+60% chance de caixas'),
+  item('Trevo de Três', '☘️', 2, S.LUCK, 20, S.DODGE, 3),
+  sp(item('Ratoeira', '🪤', 2, S.ARMOR, 1), SP_STUN, 12, '12% de chance de atordoar ao acertar'),
+  sp(item('Cara Congelada', '🥶', 2, S.ATK_SPEED, 4), SP_FREEZE, 15, '15% de chance de congelar ao acertar'),
+  item('Gato Preto', '🐈‍⬛', 2, S.CRIT, 8, S.LUCK, 8, S.HP, -3),
+  sp(item('Confete', '🎊', 2, S.ATK_SPEED, 3), SP_BOOM, 10, '10% dos inimigos explodem ao morrer'),
+  item('Coração Gigante', '💗', 3, S.HP, 18, S.LIFESTEAL, 4, S.SPEED, -4),
+  sp(item('Martelo do Trovão', '⚒️', 3, S.MELEE, 4, S.ELEMENTAL, 4), SP_CHAIN, 35, '35% de chance de dar choque num inseto vizinho'),
+  sp(item('Relógio de Bolso', '🕰️', 3, S.ATK_SPEED, 8), SP_HASTE, 40, 'A habilidade ativa recarrega 40% mais rápido'),
+  sp(item('Muralha', '🏯', 3, S.ARMOR, 5, S.HP, 8), SP_PARRY, 80, '(3D) Janela do parry 80% maior'),
+  item('Leão', '🦁', 3, S.MELEE, 6, S.DAMAGE, 8, S.HP, 8, S.SPEED, -3),
+  sp(item('Raposa', '🦊', 3, S.DODGE, 8, S.SPEED, 8, S.CRIT, 6), SP_KILLSPEED, 20, 'Ao matar: +20% de velocidade por 2 s'),
+  item('Dragão Chinês', '🐲', 3, S.ELEMENTAL, 7, S.ATK_SPEED, 10, S.HP, -4),
+  item('Unicórnio', '🦄', 3, S.LUCK, 30, S.REGEN, 4, S.DODGE, 4),
+  sp(item('Tornado', '🌪️', 3, S.SPEED, 10, S.ATK_SPEED, 10), SP_MAGNET, 80, '+80% alcance de coleta'),
+  item('Varinha Mágica', '🪄', 3, S.ELEMENTAL, 6, S.RANGE, 40, S.CRIT, 5),
+  sp(item('Arena', '🏟️', 3, S.DAMAGE, 6), SP_ELITE, 60, '+60% de dano em elites e chefões'),
+  item('Celeiro', '🛖', 3, S.HARVEST, 25, S.HP, 6, S.LUCK, 10),
+  sp(item('Estrela Cadente', '🌠', 3, S.ELEMENTAL, 5), SP_FREEZE, 20, '20% de chance de congelar ao acertar'),
+  item('Olho de Águia', '👁️', 3, S.RANGED, 6, S.CRIT, 8, S.RANGE, 50),
+  sp(item('Lua Cheia', '🌕', 3, S.LIFESTEAL, 3, S.CRIT, 6), SP_CRITHEAL, 15, 'Crítico tem 15% de chance de curar 1'),
+  sp(item('Bomba-Relógio', '⏰', 3, S.DAMAGE, 6), SP_BOOM, 25, '25% dos inimigos explodem ao morrer'),
+);
 
 // --- Conjuntos (sinergias): juntar 3 ou 5 coisas da mesma família dá bônus ---
 const SETS = {
@@ -203,6 +288,24 @@ const ITEM_TAGS = {
   'Gota de Sangue': ['sangue'], 'Skate': ['ligeiro'], 'Cesta': ['fazenda'], 'Espadas Cruzadas': ['brigao', 'atirador'], 'Sol': ['fogo'],
   'Galáxia': ['gelo'], 'Castelo': ['defesa'], 'Caça-níquel': ['sorte', 'fazenda'], 'Olho Grego': ['ligeiro', 'destruidor'],
   'Máscara de Oni': ['brigao', 'destruidor'], 'Disco Voador': ['atirador'], 'Coração Pulsante': ['sangue'],
+  // 5.0
+  'Pão': ['defesa'], 'Bússola': ['atirador'], 'Apito': ['ligeiro'], 'Clipe': ['destruidor'], 'Lamparina': ['fogo'],
+  'Cubo de Gelo': ['gelo'], 'Moeda': ['sorte'], 'Feijão Mágico': ['fazenda'], 'Chá': ['defesa'], 'Faixa de Luta': ['brigao'],
+  'Tesoura': ['brigao'], 'Bandeira': ['ligeiro'], 'Ampulheta': ['ligeiro'], 'Escudo de Madeira': ['defesa'], 'Pilha Fraca': ['destruidor'],
+  'Picolé': ['gelo'], 'Biscoito da Sorte': ['sorte'], 'Prego': ['defesa'], 'Corda': ['sangue'],
+  'Óculos de Mergulho': ['atirador'], 'Estetoscópio': ['sangue'], 'Termômetro': ['fogo'], 'Patins': ['ligeiro'], 'Kimono': ['brigao'],
+  'Taco': ['brigao'], 'Raio na Garrafa': ['destruidor'], 'Corrente': ['brigao'], 'Relógio': ['ligeiro'], 'Espelho de Bolso': ['defesa'],
+  'Flor de Lótus': ['sorte'], 'Vinagre': ['sangue'], 'Mira Laser': ['atirador'], 'Bola de Cristal': ['gelo'], 'Trator': ['fazenda'],
+  'Vara de Pescar': ['fazenda'], 'Casaco': ['defesa'], 'Troféu': ['destruidor'], 'Ursinho Vampiro': ['sangue'], 'Tambor': ['brigao'],
+  'Tempestade': ['destruidor', 'gelo'], 'Nunchaku': ['brigao'], 'Paraquedas': ['ligeiro'], 'Ampulheta Dourada': ['ligeiro'],
+  'Escudo Refletor': ['defesa'], 'Coruja': ['atirador'], 'Tubarão': ['sangue', 'brigao'], 'Medalha': ['destruidor'],
+  'Acampamento': ['defesa', 'sangue'], 'Adaga': ['brigao', 'destruidor'], 'Extintor': ['gelo'], 'Mochila': ['fazenda'],
+  'Planta Carnívora': ['sangue'], 'Antena': ['atirador'], 'Pimentão': ['fogo'], 'Ninho': ['sorte', 'fazenda'], 'Trevo de Três': ['sorte'],
+  'Ratoeira': ['defesa'], 'Cara Congelada': ['gelo'], 'Gato Preto': ['sorte', 'destruidor'], 'Confete': ['destruidor'],
+  'Coração Gigante': ['sangue'], 'Martelo do Trovão': ['destruidor', 'brigao'], 'Relógio de Bolso': ['ligeiro'], 'Muralha': ['defesa'],
+  'Leão': ['brigao'], 'Raposa': ['ligeiro'], 'Dragão Chinês': ['fogo'], 'Unicórnio': ['sorte'], 'Tornado': ['ligeiro', 'fazenda'],
+  'Varinha Mágica': ['gelo', 'fogo'], 'Arena': ['destruidor'], 'Celeiro': ['fazenda'], 'Estrela Cadente': ['gelo'],
+  'Olho de Águia': ['atirador'], 'Lua Cheia': ['sangue'], 'Bomba-Relógio': ['destruidor', 'fogo'],
 };
 for (const it of ITEMS) it.tags = ITEM_TAGS[it.name] || [];
 
@@ -239,7 +342,8 @@ const CYBORG_ITEMS = [
 for (const it of CYBORG_ITEMS) it.tags = [];
 // A ordem respeita as versões antigas (itens velhos, Alien velhos, Cyborg) e depois vêm os novos.
 const ALL_ITEMS = ITEMS.slice(0, OLD_ITEM_COUNT).concat(ALIEN_ITEMS.slice(0, OLD_ITEM_COUNT), CYBORG_ITEMS,
-  ITEMS.slice(OLD_ITEM_COUNT), ALIEN_ITEMS.slice(OLD_ITEM_COUNT));
+  ITEMS.slice(OLD_ITEM_COUNT, V4_ITEM_COUNT), ALIEN_ITEMS.slice(OLD_ITEM_COUNT, V4_ITEM_COUNT),
+  ITEMS.slice(V4_ITEM_COUNT), ALIEN_ITEMS.slice(V4_ITEM_COUNT));
 // famílias das armas
 const WEAPON_TAGS = new Map([[W.SOCO, 'brigao'], [W.FACA, 'brigao'], [W.ESPADA, 'brigao'], [W.LANCA, 'brigao'], [W.MARTELO, 'brigao'],
   [W.ESTILINGUE, 'atirador'], [W.PISTOLA, 'atirador'], [W.SEMENTEIRA, 'atirador'], [W.ESCOPETA, 'atirador'], [W.ARCO, 'atirador'],
@@ -332,6 +436,30 @@ const CHARS = [
     'elements', 'Troca de elemento a cada 5 s: 🔥 queima, ❄️ congela e ⚡ dá choque no inseto vizinho.', 'elements'),
     'Vença com 6 legumes diferentes', (r) => Object.keys(r.winsByChar || {}).length >= 6),
 ];
+// Habilidades ativas (5.0): 18 dos 30 legumes (60%) têm uma. Botão ⭐ / tecla Q; recarga em segundos.
+function act(id, icon, name, cd, desc) { return { id, icon, name, cd, desc }; }
+const ACTIVES = {
+  'Batata Básica': act('chips', '🍟', 'Batata Frita', 9, 'Gira e solta 12 batatas fritas em volta.'),
+  'Tomatão': act('slam', '💢', 'Esmagar', 8, 'Pula e esmaga o chão: dano e empurrão em volta.'),
+  'Cenoura Ninja': act('smoke', '💨', 'Bomba de Fumaça', 14, 'Some por 3 s: os insetos perdem você e seus golpes são críticos.'),
+  'Milho Atirador': act('popcorn', '🍿', 'Pipocar', 12, 'Ataca 3x mais rápido por 4 s.'),
+  'Pimenta Ardida': act('nova', '🔥', 'Explosão Picante', 10, 'Explosão de fogo em volta que queima tudo.'),
+  'Abóbora Blindada': act('wall', '🧱', 'Casca Grossa', 14, 'Por 4 s leva 80% menos dano (mas fica lenta).'),
+  'Cogumelo Místico': act('spores', '🍄', 'Esporos', 12, 'Nuvem de esporos onde você mira: deixa lento e envenena.'),
+  'Cyborg Cebola': act('overdrive', '⚡', 'Sobrecarga', 15, 'O laser esfria na hora e não esquenta por 4 s.'),
+  'Vampiro Kiwi': act('feast', '🩸', 'Banquete', 12, 'Suga a vida dos insetos em volta (cura 1 por inseto).'),
+  'Melancia Minadora': act('megamine', '🍉', 'Melancia Gigante', 10, 'Joga uma melancia que explode forte onde você mira.'),
+  'Mirtilo Invocador': act('swarm', '🫐', 'Enxame', 15, '+3 mirtilinhos por 8 s.'),
+  'Coco Rolante': act('roll', '🥥', 'Rolar', 12, 'Vira uma bola por 4 s: +80% de velocidade e atropela 3x mais forte.'),
+  'Uva Ilusionista': act('bunch', '🍇', 'Cacho de Ilusões', 14, 'Deixa 3 uvas falsas em volta de uma vez.'),
+  'Alho Exorcista': act('exorcism', '👻', 'Exorcismo', 15, 'Bafo enorme: assusta e machuca tudo num raio grande.'),
+  'Alface Ventania': act('dash', '🌬️', 'Dash', 2.5, 'Voa pra frente sem levar dano e machuca quem atravessar.'),
+  'Pêssego Apostador': act('reroll', '🎰', 'Girar a Roleta', 20, 'Sorteia de novo o efeito da roleta.'),
+  'Azeitona Gravitacional': act('singularity', '🕳️', 'Singularidade', 12, 'Buraco negro enorme onde você mira, na hora.'),
+  'Manga Elementar': act('fusion', '🌈', 'Fusão', 15, 'Por 5 s os acertos queimam, congelam e dão choque juntos.'),
+};
+for (const c of CHARS) c.active = ACTIVES[c.name] || null;
+
 // Roleta do Pêssego Apostador
 const ROULETTE = [
   { text: '+60% de dano', dmg: 1.6 },
@@ -345,6 +473,9 @@ const ROULETTE = [
 ];
 
 const AI_CHASE = 0, AI_SHOOT = 1, AI_CHARGE = 2, AI_BOSS_SNAIL = 3, AI_BOSS_ANT = 4, AI_ZIGZAG = 5, AI_BOSS_BEETLE = 6;
+// 5.0: inimigos com estratégias diferentes
+const AI_DRAIN = 7, AI_BLINK = 8, AI_LEAP = 9, AI_BURROW = 10, AI_SHIELDED = 11, AI_HEALER = 12, AI_COMMANDER = 13,
+  AI_WEB = 14, AI_STRAFE = 15, AI_KAMIKAZE = 16;
 function enemyDef(name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss) {
   return { name, icon, ai, hp, speed, damage, damagePerWave, radius, drops, minWave, boss };
 }
@@ -360,11 +491,28 @@ const E = {
 E.MARIPOSA = enemyDef('Mariposa', '🦋', AI_ZIGZAG, 4, 150, 1, 0.5, 17, 1, 4, false);
 E.BESOURO_INFERNAL = enemyDef('Besouro Infernal', '🪲', AI_BOSS_BEETLE, 9000, 105, 10, 0, 76, 120, 35, true);
 const BOSSES = [E.LESMA_RAINHA, E.FORMIGA_IMPERATRIZ, E.BESOURO_INFERNAL];
-const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO, E.MARIPOSA];
+/** extra: hue (cor do emoji girada, para variações), tip (dica que aparece da 1ª vez), split, stink, limit (máximo vivos). */
+function foe(d, extra) { return Object.assign(d, extra); }
+// 5.0: 12 insetos novos, cada um pede uma estratégia diferente
+E.BARATA = foe(enemyDef('Barata', '🪳', AI_CHASE, 6, 150, 1, 0.5, 18, 1, 3, false), { split: 2, tip: 'Barata: ao morrer vira duas baratinhas' });
+E.BARATINHA = enemyDef('Baratinha', '🪳', AI_CHASE, 2, 190, 1, 0.3, 12, 0, 99, false);
+E.MOSQUITO = foe(enemyDef('Mosquito', '🦟', AI_DRAIN, 4, 210, 1, 0.5, 15, 1, 4, false), { tip: 'Mosquito: pica, rouba vida e foge' });
+E.GRILO = foe(enemyDef('Grilo Saltador', '🦗', AI_LEAP, 10, 70, 2, 0.7, 20, 1, 5, false), { tip: 'Grilo: pula onde você estava — saia da marca!' });
+E.MOSCA = foe(enemyDef('Mosca Teleportadora', '🪰', AI_BLINK, 6, 120, 1, 0.6, 16, 1, 6, false), { tip: 'Mosca: some e aparece do seu lado' });
+E.PERCEVEJO = foe(enemyDef('Percevejo Fedido', '🪲', AI_CHASE, 9, 90, 1, 0.5, 20, 1, 7, false), { hue: 95, stink: 1, tip: 'Percevejo: ao morrer solta uma nuvem tóxica' });
+E.CUPIM = foe(enemyDef('Cupim-Bomba', '🐜', AI_KAMIKAZE, 7, 165, 4, 1.2, 17, 1, 8, false), { hue: 320, tip: 'Cupim-Bomba: corre até você e explode' });
+E.TECELA = foe(enemyDef('Aranha Tecelã', '🕷️', AI_WEB, 10, 75, 1, 0.4, 21, 2, 8, false), { hue: 200, tip: 'Tecelã: a teia deixa você lento' });
+E.ESCUDEIRO = foe(enemyDef('Besouro Escudeiro', '🪲', AI_SHIELDED, 30, 65, 2, 0.8, 26, 3, 9, false), { hue: 200, tip: 'Escudeiro: o escudo da frente bloqueia — ataque pelos lados ou por trás' });
+E.ATIRADORA = foe(enemyDef('Vespa Atiradora', '🐝', AI_STRAFE, 7, 160, 1, 0.5, 17, 1, 10, false), { hue: 300, tip: 'Vespa Atiradora: rodeia você atirando rajadas' });
+E.MINHOCA = foe(enemyDef('Minhoca', '🪱', AI_BURROW, 14, 230, 2, 0.8, 20, 2, 11, false), { tip: 'Minhoca: anda por baixo da terra e sai embaixo de você' });
+E.FUNGO = foe(enemyDef('Fungo Curandeiro', '🦠', AI_HEALER, 16, 60, 1, 0.3, 22, 2, 12, false), { limit: 2, tip: 'Fungo: cura os insetos em volta — derrube ele primeiro!' });
+E.GENERAL = foe(enemyDef('Formiga-General', '🐜', AI_COMMANDER, 22, 85, 2, 0.6, 24, 3, 13, false), { hue: 40, limit: 1, tip: 'General: deixa os insetos perto mais rápidos e fortes' });
+const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO, E.MARIPOSA,
+  E.BARATA, E.MOSQUITO, E.GRILO, E.MOSCA, E.PERCEVEJO, E.CUPIM, E.TECELA, E.ESCUDEIRO, E.ATIRADORA, E.MINHOCA, E.FUNGO, E.GENERAL];
 
 // Dificuldades (as duas últimas são novas: Inferno tem 35 ondas e visual infernal; Infinito não acaba)
-const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo', 'Inferno', 'Infinito'];
-const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀', '😈', '♾️'];
+const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo', 'Inferno', 'Infinito', 'Ascensão'];
+const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀', '😈', '♾️', '📈'];
 const DIFF_DESC = [
   'Inimigos mais fracos. Bom pra aprender.',
   'O jogo como ele deve ser.',
@@ -372,13 +520,22 @@ const DIFF_DESC = [
   'Mais elites e muito mais dano. Boa sorte!',
   'A dificuldade máxima: 35 ondas numa horta em chamas.',
   'Pesadelo sem fim: até onde você chega?',
+  'Começa fácil e fica quase impossível: 20 ondas.',
 ];
 // Versão 4.1: tudo 2x mais difícil (insetos com ~40% mais vida, ~40% mais dano e 10% mais insetos)
-const DIFF_HP = [0.84, 1.6, 1.95, 2.4, 2.8, 2.4];
-const DIFF_DMG = [0.84, 1.6, 2.0, 2.5, 2.95, 2.5];
-const DIFF_SPAWN = [1.04, 0.9, 0.81, 0.72, 0.65, 0.72];
-const DIFF_WAVES = [20, 20, 20, 20, 35, 0]; // 0 = infinito
-const DIFF_INFERNO = 4, DIFF_ENDLESS = 5;
+const DIFF_HP = [0.84, 1.6, 1.95, 2.4, 2.8, 2.4, 1];
+const DIFF_DMG = [0.84, 1.6, 2.0, 2.5, 2.95, 2.5, 1];
+const DIFF_SPAWN = [1.04, 0.9, 0.81, 0.72, 0.65, 0.72, 1];
+const DIFF_WAVES = [20, 20, 20, 20, 35, 0, 20]; // 0 = infinito
+const DIFF_INFERNO = 4, DIFF_ENDLESS = 5, DIFF_ASCENT = 6;
+/**
+ * Ascensão: a força dos insetos sobe a cada onda. Onda 1 ≈ metade do Fácil; onda 10 ≈ Difícil;
+ * onda 20 ≈ o dobro do Inferno (vida) e bem mais insetos.
+ */
+function ascent(wave) {
+  const k = Math.max(0, wave - 1);
+  return { hp: 0.45 * Math.pow(1.165, k), dmg: 0.45 * Math.pow(1.145, k), spawn: Math.max(0.42, 1.15 - k * 0.039), elites: Math.floor(k / 4) };
+}
 
 // --- Conquistas (com barra de progresso). rec = recordes salvos ---
 function countBits(n) { let c = 0; while (n) { c += n & 1; n >>= 1; } return c; }
@@ -412,4 +569,11 @@ const ACHIEVEMENTS = [
   ach('shop1', '🛒', 'Cliente Fiel', 'Compre 200 coisas na loja', 200, (r) => r.itemsBought || 0),
   ach('shop2', '💸', 'Consumista', 'Compre 1.000 coisas na loja', 1000, (r) => r.itemsBought || 0),
   ach('unlock', '🔓', 'Horta Completa', 'Libere todos os 30 legumes', 30, (r) => CHARS.filter((c) => isUnlocked(c, r)).length),
+  // 5.0
+  ach('ascent1', '📈', 'Escalador', 'Chegue na onda 15 da Ascensão', 15, (r) => r.bestAscent || 0),
+  ach('ascent2', '🏔️', 'Topo do Mundo', 'Vença a Ascensão', 1, (r) => (r.ascentWon ? 1 : 0)),
+  ach('win3d', '🧊', 'Nova Dimensão', 'Vença uma partida no modo 3D', 1, (r) => r.wins3d || 0),
+  ach('parry1', '🛡️', 'Aparador', 'Faça 100 parries no modo 3D', 100, (r) => r.parries || 0),
+  ach('parry2', '⚔️', 'Mestre do Parry', 'Faça 1.000 parries no modo 3D', 1000, (r) => r.parries || 0),
+  ach('active1', '⭐', 'Habilidoso', 'Use 200 habilidades ativas', 200, (r) => r.actives || 0),
 ];

@@ -102,8 +102,9 @@ const MetaUi = {
 
   loadDailyRank() {
     const ch = dailyChallenge();
-    const r = this.dailyRank = { date: ch.date, loading: true, entries: null, error: '' };
-    Ranking.topAt(Ranking.dailyUrl(ch.date)).then((list) => {
+    const m3 = !!this.prefs.data.mode3d;
+    const r = this.dailyRank = { date: ch.date, loading: true, entries: null, error: '', m3 };
+    Ranking.topAt(Ranking.dailyUrl(ch.date, m3)).then((list) => {
       if (this.dailyRank !== r) return;
       r.entries = list; r.loading = false;
     }).catch(() => {
@@ -116,6 +117,7 @@ const MetaUi = {
   startDaily() {
     const ch = dailyChallenge();
     this.prefs.clearRun();
+    this.game.mode3d = !!this.prefs.data.mode3d;
     this.game.newRun(CHARS[ch.char], ch.diff, ch);
     this.startTicket();
     this.joy = null;
@@ -145,12 +147,13 @@ const MetaUi = {
     // ranking de hoje
     const rx = lx + lw + 30, rw = vw - 30 - rx, r = this.dailyRank || {};
     this.panel(rx, top, rw, h);
-    this.text('🏆 Ranking de hoje', rx + rw / 2, top + 42, 26, C.GOLD, 'center');
+    this.text('🏆 Ranking de hoje' + (r.m3 ? ' (3D)' : ' (2D)'), rx + rw / 2, top + 42, 26, C.GOLD, 'center');
     this.drawRankRows(r, rx + 14, top + 62, rw - 28, 10, 38, 'daily');
     this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
     this.button(vw - 230, VH - 96, 200, 74, 'Atualizar', 'DAILY_REFRESH', 0, C.GRAY, !r.loading, 28);
-    this.text('Jogar em dias diferentes libera o Pêssego Apostador e conquistas.', cx, VH - 50, 17, 'rgba(255,255,255,0.6)', 'center');
-    if (!this.touch) this.text('Enter: jogar  •  Esc: voltar', cx, VH - 24, 16, 'rgba(255,255,255,0.45)', 'center');
+    const m3 = !!d.mode3d;
+    this.button(cx - 110, VH - 96, 220, 74, m3 ? '🧊 Jogar em 3D' : '🟩 Jogar em 2D', 'DAILY_M3', 0, m3 ? '#2E6FA8' : '#3E7A2E', true, 24);
+    if (!this.touch) this.text('Enter: jogar  •  V: 2D/3D  •  Esc: voltar', cx, VH - 6, 15, 'rgba(255,255,255,0.45)', 'center');
     if (this.rankView) this.drawRankView();
   },
 
@@ -391,19 +394,6 @@ const MetaUi = {
     const g = this.game, vw = this.vw;
     let line = '', color = '#FFE08A';
     switch (p.kind) {
-      case 'dash': {
-        const ready = p.dashCd <= 0;
-        if (this.touch) {
-          const b = this.dashButton();
-          this.circle(b.x + b.s / 2, b.y + b.s / 2, b.s / 2, ready ? 'rgba(120,220,140,0.45)' : 'rgba(60,60,60,0.45)');
-          this.emoji('💨', b.x + b.s / 2, b.y + b.s / 2, b.s * 0.5);
-          if (!ready) this.text(p.dashCd.toFixed(1), b.x + b.s / 2, b.y + b.s / 2 + 44, 22, '#FFFFFF', 'center');
-          this.register(b.x, b.y, b.s, b.s, 'DASH', 0, true);
-        }
-        line = ready ? '💨 Dash pronto' + (this.touch ? '' : ' (Espaço)') : '💨 ' + p.dashCd.toFixed(1) + ' s';
-        color = ready ? '#8CF08C' : '#CFCFCF';
-        break;
-      }
       case 'roulette':
         if (p.roulette >= 0) { line = '🎲 ' + ROULETTE[p.roulette].text; color = ROULETTE[p.roulette].text.includes('azar') ? '#FF8A7A' : '#FFE14A'; }
         break;

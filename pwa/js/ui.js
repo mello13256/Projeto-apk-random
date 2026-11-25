@@ -17,7 +17,7 @@ class Prefs {
   constructor() {
     this.data = {
       sound: true, music: true, bestWave: 0, wins: 0, totalKills: 0, bestDiffWon: -1, lastChar: 0, lastDiff: 1, savedRun: null,
-      gamesPlayed: 0, totalSeeds: 0, ach: {}, bestEndless: 0,
+      gamesPlayed: 0, totalSeeds: 0, ach: {}, bestEndless: 0, bestAscent: 0, ascentWon: 0, wins3d: 0, parries: 0, actives: 0,
       bossKills: 0, eliteKills: 0, itemsBought: 0, dailyDays: 0, lastDaily: '', winsByChar: {}, achDone: {},
     };
     try { Object.assign(this.data, JSON.parse(localStorage.getItem('horta_hostil') || '{}')); } catch (e) { /* sem armazenamento */ }
@@ -32,6 +32,13 @@ class Prefs {
     const d = this.data;
     if (info.wave > d.bestWave) d.bestWave = info.wave;
     if (info.diff === DIFF_ENDLESS && info.wave > d.bestEndless) d.bestEndless = info.wave;
+    if (info.diff === DIFF_ASCENT && !info.daily) {
+      d.bestAscent = Math.max(d.bestAscent || 0, info.wave);
+      if (info.won) d.ascentWon = 1;
+    }
+    if (info.won && info.mode3d) d.wins3d = (d.wins3d || 0) + 1;
+    d.parries = (d.parries || 0) + (info.parries || 0);
+    d.actives = (d.actives || 0) + (info.actives || 0);
     if (info.won) { d.wins++; if (info.diff > d.bestDiffWon) d.bestDiffWon = info.diff; }
     d.totalKills += info.kills || 0;
     d.totalSeeds += info.seeds || 0;
@@ -85,7 +92,11 @@ class Sprites {
     c = document.createElement('canvas');
     c.width = c.height = size;
     const g = c.getContext('2d');
-    if (tint) {
+    if (tint && tint[0] === 'h') { // "h95" = cores giradas 95° (variações dos insetos)
+      g.filter = 'hue-rotate(' + tint.slice(1) + 'deg) saturate(1.3)';
+      g.drawImage(this.get(emoji, size, null), 0, 0);
+      g.filter = 'none';
+    } else if (tint) {
       g.drawImage(this.get(emoji, size, null), 0, 0);
       g.globalCompositeOperation = 'source-atop';
       g.fillStyle = tint;
@@ -202,7 +213,7 @@ class Ui {
     r.error = '';
     r.entries = null;
     const token = (r.token = (r.token || 0) + 1);
-    (diff === RANK_DAILY ? Ranking.topAt(Ranking.dailyUrl(dailyChallenge().date)) : Ranking.top(diff)).then((list) => {
+    (diff === RANK_DAILY ? Ranking.topAt(Ranking.dailyUrl(dailyChallenge().date, r.m3)) : Ranking.top(diff, r.m3)).then((list) => {
       if (token !== r.token) return;
       r.entries = list;
       r.loading = false;
@@ -222,10 +233,10 @@ class Ui {
     if (!p || g.coop) return;
     const info = { diff: g.difficulty, character: CHARS.indexOf(p.character), wave: g.wave, won: g.state === 'VICTORY', kills: g.kills, level: p.level };
     const daily = g.daily ? g.daily.date : null;
-    const base = daily ? Ranking.dailyUrl(daily) : RANKING_URL + '/d' + info.diff;
+    const base = daily ? Ranking.dailyUrl(daily, g.mode3d) : Ranking.boardUrl(info.diff, g.mode3d);
     const build = Ranking.buildOf(p);
     const go = (name) => {
-      this.rankPost = { status: 'sending', daily: !!daily };
+      this.rankPost = { status: 'sending', daily: !!daily, m3: g.mode3d };
       const id = this.account.rankId();
       this.rank.myId = id;
       Ranking.postBestAt(base, id, {
@@ -233,10 +244,10 @@ class Ui {
         platform: IS_APP ? 'android' : 'web', b: build,
       }).then((r) => {
         if (!r.posted) {
-          this.rankPost = { status: 'kept', best: r.best, daily: !!daily };
+          this.rankPost = { status: 'kept', best: r.best, daily: !!daily, m3: g.mode3d };
           return null;
         }
-        this.rankPost = { status: 'new', first: !r.best, daily: !!daily };
+        this.rankPost = { status: 'new', first: !r.best, daily: !!daily, m3: g.mode3d };
         return Ranking.topAt(base).then((list) => {
           const pos = list.findIndex((e) => e.id === id);
           if (pos >= 0) this.rankPost.pos = pos + 1;
@@ -262,13 +273,13 @@ class Ui {
     const g = this.game;
     if (g.coop || g.pvp) return;
     const t = this.ticket = { ok: false };
-    Ranking.ticket(this.account.rankId(), g.daily ? 'daily' : 'd' + g.difficulty).then(() => { t.ok = true; }, () => {});
+    Ranking.ticket(this.account.rankId(), g.daily ? (g.mode3d ? 'daily3d' : 'daily') : Ranking.board(g.difficulty, g.mode3d)).then(() => { t.ok = true; }, () => {});
   }
 
   /** Texto do ranking no fim da partida. */
   rankPostText() {
     const r = this.rankPost || {};
-    const d = r.daily ? 'Desafio de hoje' : DIFF_NAMES[this.game.difficulty];
+    const d = (r.daily ? 'Desafio de hoje' : DIFF_NAMES[this.game.difficulty]) + (r.m3 ? ' 3D' : '');
     switch (r.status) {
       case 'sending': return ['🏆 Postando no ranking...', '#FFE678'];
       case 'name': return ['🏆 Escolha seu nome pro ranking', '#FFE678'];
@@ -328,8 +339,9 @@ class Ui {
   moveVector() {
     let x = 0, y = 0;
     const k = this.keys;
-    if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
-    if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
+    const look = this.freeLook(); // 1ª/3ª pessoa: as setas dos lados giram a câmera
+    if (k.has('KeyA') || (k.has('ArrowLeft') && !look)) x -= 1;
+    if (k.has('KeyD') || (k.has('ArrowRight') && !look)) x += 1;
     if (k.has('KeyW') || k.has('ArrowUp')) y -= 1;
     if (k.has('KeyS') || k.has('ArrowDown')) y += 1;
     if (this.joy) {
@@ -337,31 +349,33 @@ class Ui {
       x += clamp(this.joy.x - this.joy.ox, -R, R) / R;
       y += clamp(this.joy.y - this.joy.oy, -R, R) / R;
     }
-    return [x, y];
+    return this.rotateMove(x, y);
   }
 
   /** O jogador deste computador usa mira manual (Cyborg Cebola)? */
-  manualAim() { const p = this.game.player; return !!p && p.kind === 'laser' && this.game.state === 'PLAYING'; }
+  manualAim() { const p = this.game.player; return !!p && (p.kind === 'laser' || this.game.mode3d) && this.game.state === 'PLAYING'; }
 
   onDown(id, x, y) {
     const b = this.hit(x, y);
-    if (b && b.action === 'DASH') { this.dashQueued = true; this.down.set(id, null); return; } // Alface: na hora que encosta
+    if (b && (b.action === 'DASH' || b.action === 'SKILL')) { this.skillQueued = true; this.down.set(id, null); return; } // na hora que encosta
+    if (b && b.action === 'PARRY') { this.parryQueued = true; this.down.set(id, null); return; }
     this.down.set(id, b ? { action: b.action, arg: b.arg } : null);
     const g = this.game;
     if (b || g.state !== 'PLAYING' || this.menuOpen()) return;
     if (this.manualAim()) {
       // Cyborg: mouse = mira e tiro; no toque, o lado direito da tela é o "analógico" da mira
-      if (id === 'mouse') { this.mouseHeld = true; return; }
-      if (x > this.vw / 2 && !this.aimJoy) { this.aimJoy = { id, ox: x, oy: y, x, y }; return; }
+      if (id === 'mouse') { this.mouseHeld = true; this.lockPointer(); return; }
+      if (x > this.vw / 2 && !this.aimJoy) { this.aimJoy = { id, ox: x, oy: y, x, y, lx: x }; return; }
     }
     if (!this.joy) this.joy = { id, ox: x, oy: y, x, y };
   }
 
   /** Entrada extra do jogador a cada passo: mira manual (laser) e dash (Alface). */
   aimInput() {
-    const r = this.aimCore();
-    r.dash = !!this.dashQueued;
-    this.dashQueued = false;
+    const r = this.is3d() ? this.aim3d() : this.aimCore();
+    r.dash = false;
+    r.skill = !!this.skillQueued; r.parry = !!this.parryQueued;
+    this.skillQueued = false; this.parryQueued = false;
     return r;
   }
 
@@ -385,6 +399,7 @@ class Ui {
     if (id === 'mouse') { this.mouseX = x; this.mouseY = y; }
     const aj = this.aimJoy;
     if (aj && aj.id === id) {
+      if (this.freeLook()) { this.onLook((x - aj.lx) * TOUCH_LOOK / LOOK_SENS); aj.lx = x; } // arrastar gira a câmera
       aj.x = x; aj.y = y;
       const dx = aj.x - aj.ox, dy = aj.y - aj.oy, d = Math.hypot(dx, dy), max = 90;
       if (d > max) { const k = (d - max) / d; aj.ox += dx * k; aj.oy += dy * k; }
@@ -454,6 +469,7 @@ class Ui {
         else if (code === 'ArrowLeft' || code === 'KeyA' || code === 'KeyQ') this.doAction('RANK_DIFF', -1);
         else if (code === 'ArrowRight' || code === 'KeyD' || code === 'KeyE') this.doAction('RANK_DIFF', 1);
         else if (code === 'KeyR') this.doAction('RANK_REFRESH');
+        else if (code === 'KeyV') this.doAction('RANK_M3');
         break;
       case 'CHAR_SELECT':
         if (code === 'ArrowLeft' || code === 'KeyA') pickSlot((sel + slots - 1) % slots);
@@ -462,6 +478,7 @@ class Ui {
         else if (code === 'ArrowDown' || code === 'KeyS') pickSlot((sel + CHAR_COLS) % slots);
         else if (code === 'KeyQ') this.doAction('DIFF', -1);
         else if (code === 'KeyE') this.doAction('DIFF', 1);
+        else if (code === 'KeyV') this.doAction('MODE3D');
         else if (ok) this.doAction('START');
         else if (code === 'Escape') this.doAction('MENU');
         break;
@@ -469,6 +486,7 @@ class Ui {
         if (this.rankView) { if (code === 'Escape' || ok) this.rankView = null; }
         else if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
         else if (ok) this.doAction('DAILY_START');
+        else if (code === 'KeyV') this.doAction('DAILY_M3');
         break;
       case 'ACHIEVEMENTS':
         if (code === 'Escape' || code === 'Backspace') this.doAction('MENU');
@@ -476,7 +494,11 @@ class Ui {
         else if (code === 'ArrowRight' || code === 'KeyD') this.doAction('ACH_PAGE', 1);
         break;
       case 'PLAYING':
-        if ((code === 'Space' || code === 'ShiftLeft' || code === 'ShiftRight') && g.player && g.player.kind === 'dash' && !this.menuOpen()) this.dashQueued = true;
+        if (!this.menuOpen() && g.player) {
+          if (code === 'KeyQ' || code === 'KeyE' || code === 'ShiftLeft' || code === 'ShiftRight') this.skillQueued = true;
+          else if (code === 'Space') { if (g.mode3d) this.parryQueued = true; else if (g.player.kind === 'dash') this.skillQueued = true; }
+          else if (code === 'KeyC' && g.mode3d) this.cycleCam();
+        }
         if (code === 'Escape' || code === 'KeyP') this.doAction(this.menuOpen() ? 'RESUME' : 'PAUSE');
         else if (this.menuOpen() && code === 'KeyQ') this.doAction('QUIT');
         break;
@@ -565,15 +587,17 @@ class Ui {
         break;
       case 'LOBBY_START': if (!this.mp.startGame()) this.showToast(this.mp.lobbyHint()); break;
       case 'LOBBY_MODE': this.mp.setMode(this.mp.mode === 'pvp' ? 'coop' : 'pvp'); break;
+      case 'LOBBY_M3': this.mp.setM3(!this.mp.m3); break;
       case 'LOBBY_LEAVE': this.mp.leave(); g.state = 'MP_MENU'; break;
       case 'MP_BACK_LOBBY': this.newUnlocks = ''; this.mp.backToLobby(); break;
       case 'UNREADY': this.mp.setReady(false); break;
-      case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.loadRanking(this.difficulty); break;
+      case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.rank.m3 = !!this.prefs.data.mode3d; this.loadRanking(this.difficulty); break;
+      case 'RANK_M3': this.rank.m3 = !this.rank.m3; this.loadRanking(this.rank.diff); break;
       case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + RANK_TABS) % RANK_TABS); break;
       case 'RANK_VIEW':
         this.rankView = ((arg >= 100 ? (this.dailyRank || {}).entries : this.rank.entries) || [])[arg % 100] || null;
-        this.rankViewBase = arg >= 100 ? 'daily/' + (this.dailyRank || {}).date
-          : this.rank.diff === RANK_DAILY ? 'daily/' + dailyChallenge().date : 'ranking/d' + this.rank.diff;
+        this.rankViewBase = arg >= 100 ? ((this.dailyRank || {}).m3 ? 'daily3d/' : 'daily/') + (this.dailyRank || {}).date
+          : this.rank.diff === RANK_DAILY ? (this.rank.m3 ? 'daily3d/' : 'daily/') + dailyChallenge().date : 'ranking/' + Ranking.board(this.rank.diff, this.rank.m3);
         this.tipItem = null; this.admDelArm = 0;
         break;
       case 'ADM_DEL': this.adminDelete(); break;
@@ -583,6 +607,7 @@ class Ui {
       case 'DAILY': this.rankView = null; this.openDaily(); break;
       case 'DAILY_START': this.newUnlocks = ''; this.startDaily(); break;
       case 'DAILY_REFRESH': this.loadDailyRank(); break;
+      case 'DAILY_M3': this.prefs.data.mode3d = !this.prefs.data.mode3d; this.prefs.save(); this.loadDailyRank(); break;
       case 'ACH': this.newUnlocks = ''; g.state = 'ACHIEVEMENTS'; break;
       case 'ACH_PAGE': this.achPage = (this.achPage || 0) + arg; break;
       case 'DASH': break;
@@ -602,6 +627,10 @@ class Ui {
       case 'HELP': this.showHelp = !this.showHelp; break;
       case 'CHAR': this.selectedChar = arg; break;
       case 'RANDOM': this.selectedChar = RANDOM_CHAR; break;
+      case 'MODE3D':
+        this.prefs.data.mode3d = !this.prefs.data.mode3d; this.prefs.save();
+        this.showToast(this.prefs.data.mode3d ? '🧊 Modo 3D: mira manual (segure pra atacar) e parry!' : '🟩 Modo 2D: mira automática');
+        break;
       case 'DIFF': this.difficulty = (this.difficulty + arg + DIFF_NAMES.length) % DIFF_NAMES.length; break;
       case 'START': {
         const unlocked = this.unlockedChars();
@@ -616,6 +645,7 @@ class Ui {
         this.prefs.data.lastChar = this.selectedChar === RANDOM_CHAR ? 0 : this.selectedChar;
         this.prefs.data.lastDiff = this.difficulty;
         this.prefs.clearRun();
+        g.mode3d = !!this.prefs.data.mode3d;
         g.newRun(CHARS[idx], this.difficulty);
         this.startTicket();
         this.joy = null;
@@ -630,7 +660,10 @@ class Ui {
         this.joy = null;
         break;
       case 'MENU': g.state = 'MENU'; g.paused = false; break;
-      case 'PAUSE': if (g.coop) this.mpMenu = true; else g.paused = true; this.joy = null; break;
+      case 'PAUSE': if (g.coop) this.mpMenu = true; else g.paused = true; this.joy = null; if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock(); break;
+      case 'CAM': this.cycleCam(); break;
+      case 'SKILL': this.skillQueued = true; break;
+      case 'PARRY': this.parryQueued = true; break;
       case 'RESUME': g.paused = false; this.mpMenu = false; break;
       case 'QUIT':
         this.mpMenu = false;
@@ -712,7 +745,7 @@ class Ui {
       case 'MENU': this.drawMenu(); break;
       case 'CHAR_SELECT': this.drawCharSelect(); break;
       case 'PLAYING':
-        this.drawWorld();
+        if (g.mode3d) this.drawWorld3d(); else this.drawWorld();
         if (this.menuOpen()) this.drawPause(); else this.drawHud();
         break;
       case 'MP_MENU': this.drawMpMenu(); break;
@@ -799,7 +832,7 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('© 2026 mello13256 • todos os direitos reservados • v4.3.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('© 2026 mello13256 • todos os direitos reservados • v5.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
   }
 
@@ -820,24 +853,29 @@ class Ui {
   }
 
   drawHelp() {
-    const w = Math.min(920, this.vw - 60), h = 540;
+    const w = Math.min(980, this.vw - 60), h = 600;
     const x = this.vw / 2 - w / 2, y = VH / 2 - h / 2;
     this.backdrop('HELP');
     this.panel(x, y, w, h);
-    this.text('COMO JOGAR', this.vw / 2, y + 60, 40, C.GOLD, 'center');
+    this.text('COMO JOGAR', this.vw / 2, y + 54, 38, C.GOLD, 'center');
     const lines = [
-      this.touch ? '• Arraste o dedo para andar. As armas atacam SOZINHAS.' : '• W A S D ou setas para andar. As armas atacam SOZINHAS.',
+      this.touch ? '• 2D: arraste o dedo para andar. As armas atacam SOZINHAS.' : '• 2D: W A S D ou setas para andar. As armas atacam SOZINHAS.',
+      this.touch ? '• 3D: sem mira automática! Lado direito = mirar e SEGURAR pra atacar.' : '• 3D: sem mira automática! Mire com o mouse e SEGURE o clique pra atacar.',
+      this.touch ? '• 3D: 🛡️ = parry na hora do golpe (devolve tiros!). 🎥 troca a câmera.' : '• 3D: Espaço/botão direito = parry na hora do golpe (devolve tiros!). C = câmera.',
+      this.touch ? '• Muitos legumes têm uma habilidade ativa: botão ⭐ (o ícone dela).' : '• Muitos legumes têm uma habilidade ativa: tecla Q (ou E/Shift).',
       '• Inimigos soltam sementes 🌱: dão experiência e dinheiro.',
       '• Elites 👑 são fortes, mas sempre deixam uma caixa 📦.',
-      '• Cada caixa vira um item grátis no fim da onda.',
       this.touch ? '• Entre as ondas: escolha melhorias e compre na loja.' : '• Entre as ondas: melhorias e loja (teclas 1-4, R = rolar).',
       '• Duas armas iguais do mesmo nível viram uma mais forte.',
-      this.touch ? '• Toque num item para ver o que ele faz.' : '• Passe o mouse num item para ver o que ele faz. Esc = pausa.',
+      '• Marca vermelha no chão = vai cair um golpe ali. Saia de cima!',
       '• A partida é salva na loja: dá pra continuar depois!',
     ];
-    lines.forEach((l, i) => this.text(l, x + 40, y + 120 + i * 44, 24, '#FFFFFF', 'left'));
-    this.button(this.vw / 2 - 110, y + h - 74, 220, 56, 'Entendi!', 'HELP', 0, C.GREEN, true, 26);
+    let size = 22;
+    while (size > 14 && lines.some((l) => this.measure(l, size) > w - 60)) size--;
+    lines.forEach((l, i) => this.text(l, x + 30, y + 100 + i * 41, size, '#FFFFFF', 'left'));
+    this.button(this.vw / 2 - 110, y + h - 70, 220, 56, 'Entendi!', 'HELP', 0, C.GREEN, true, 26);
   }
+
 
   // --- Multiplayer: menu ---
 
@@ -918,10 +956,14 @@ class Ui {
     // modo (cooperativo ou PvP) e dificuldade
     const half = (vw - 80) / 2, mx = 30, dx = 50 + half;
     const pvp = mp.mode === 'pvp';
-    if (host) this.button(mx, 488, half, 74, '', 'LOBBY_MODE', 0, pvp ? '#8E2B2B' : '#2E6B3A', true, 20);
-    else this.roundRect(mx, 488, half, 74, 16, pvp ? 'rgba(142,43,43,0.6)' : 'rgba(46,107,58,0.6)');
-    this.textFit('Modo: ' + (pvp ? '⚔️ PvP (todos contra todos)' : '🤝 Cooperativo') + (host ? '  (toque pra trocar)' : ''), mx + half / 2, 518, 23, half - 20, '#FFFFFF');
-    this.textFit(pvp ? '15 rodadas pra se preparar, depois duelo numa arena que fecha' : 'Todos juntos contra os insetos', mx + half / 2, 546, 16, half - 20, '#FFE0D0');
+    const mw = half - 140; // botão do modo + botão 2D/3D
+    if (host) this.button(mx, 488, mw, 74, '', 'LOBBY_MODE', 0, pvp ? '#8E2B2B' : '#2E6B3A', true, 20);
+    else this.roundRect(mx, 488, mw, 74, 16, pvp ? 'rgba(142,43,43,0.6)' : 'rgba(46,107,58,0.6)');
+    this.textFit('Modo: ' + (pvp ? '⚔️ PvP (todos contra todos)' : '🤝 Cooperativo') + (host ? '  (toque pra trocar)' : ''), mx + mw / 2, 518, 23, mw - 20, '#FFFFFF');
+    this.textFit(pvp ? '15 rodadas pra se preparar, depois duelo numa arena que fecha' : 'Todos juntos contra os insetos', mx + mw / 2, 546, 16, mw - 20, '#FFE0D0');
+    const m3x = mx + mw + 10;
+    if (host) this.button(m3x, 488, 130, 74, mp.m3 ? '🧊 3D' : '🟩 2D', 'LOBBY_M3', 0, mp.m3 ? '#2E6FA8' : '#3E7A2E', true, 26);
+    else { this.roundRect(m3x, 488, 130, 74, 16, mp.m3 ? 'rgba(46,111,168,0.6)' : 'rgba(62,122,46,0.6)'); this.text(mp.m3 ? '🧊 3D' : '🟩 2D', m3x + 65, 535, 26, '#FFFFFF', 'center'); }
     const diffColor = DIFF_COLORS;
     const dtx = DIFF_ICONS[mp.diff] + ' ' + DIFF_NAMES[mp.diff];
     this.roundRect(dx, 488, half, 74, 16, 'rgba(0,0,0,0.4)');
@@ -1004,7 +1046,8 @@ class Ui {
         this.text(t, mx + 9, my, 18, v >= 0 ? '#8CF08C' : '#FF8080', 'left');
         mx += w;
       }
-      const ay = this.wrapped('⭐ ' + cd.ability, tx, my + 34, tw - 10, 19, '#FFFFFF', 'left');
+      let ay = this.wrapped('⭐ ' + cd.ability, tx, my + 34, tw - 10, 19, '#FFFFFF', 'left');
+      if (cd.active) ay = this.wrapped('🔘 Habilidade ativa: ' + cd.active.icon + ' ' + cd.active.name + ' — ' + cd.active.desc + ' (recarga ' + cd.active.cd + ' s)', tx, ay + 4, tw - 10, 18, '#FFE14A', 'left');
       if (!open) this.wrapped('🔒 Para liberar: ' + unlockText(cd), tx, ay + 6, tw - 10, 20, '#FFC870', 'left');
       // grade de vitórias deste legume
       const mask = (this.prefs.data.winsByChar || {})[idx] || 0;
@@ -1018,6 +1061,10 @@ class Ui {
         wx += w + 6;
       }
     }
+    // 2D ou 3D
+    const m3 = !!this.prefs.data.mode3d;
+    this.button(vw - 30 - 196, py + 12, 180, 52, m3 ? '🧊 Modo 3D' : '🟩 Modo 2D', 'MODE3D', 0, m3 ? '#2E6FA8' : '#3E7A2E', true, 24);
+    if (!this.touch) this.keyBadge('V', vw - 30 - 28, py + 14);
     // linha de baixo: voltar, dificuldade, começar
     const by = VH - 98, narrow = vw < 1200;
     const backW = narrow ? 150 : 190, startW = narrow ? 220 : 270;
@@ -1048,7 +1095,7 @@ class Ui {
     for (let i = 0; i < nt; i++) {
       const sel = i === r.diff;
       const label = i === RANK_DAILY ? '📅 Hoje' : DIFF_ICONS[i] + ' ' + DIFF_NAMES[i];
-      this.button(tx + i * (tw + 8), 88, tw, 58, label, 'RANK_TAB', i, sel ? '#4CAF50' : i === RANK_DAILY ? '#C0571E' : C.GRAY, true, 22);
+      this.button(tx + i * (tw + 8), 88, tw, 58, label, 'RANK_TAB', i, sel ? '#4CAF50' : i === RANK_DAILY ? '#C0571E' : C.GRAY, true, tw < 150 ? 17 : 22);
       if (sel) this.roundRect(tx + i * (tw + 8), 88, tw, 53, 16, null, C.GOLD, 4);
     }
     // lista (2 colunas de 10)
@@ -1059,7 +1106,7 @@ class Ui {
     } else if (r.error) {
       this.text(r.error, cx, top + 200, 26, '#FF9A8A', 'center');
     } else if (r.entries && r.entries.length === 0) {
-      this.text(r.diff === RANK_DAILY ? 'Ninguém jogou o desafio de hoje ainda.' : 'Ninguém no ranking do ' + DIFF_NAMES[r.diff] + ' ainda.', cx, top + 185, 28, '#E8F5D0', 'center');
+      this.text(r.diff === RANK_DAILY ? 'Ninguém jogou o desafio de hoje' + (r.m3 ? ' em 3D' : '') + ' ainda.' : 'Ninguém no ranking ' + (r.m3 ? '3D ' : '') + 'do ' + DIFF_NAMES[r.diff] + ' ainda.', cx, top + 185, 28, '#E8F5D0', 'center');
       this.text('Jogue e seja o primeiro!', cx, top + 225, 24, '#CFE3B8', 'center');
     } else if (r.entries) {
       const medals = ['🥇', '🥈', '🥉'];
@@ -1082,6 +1129,8 @@ class Ui {
     }
     this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
     this.button(vw - 230, VH - 96, 200, 74, 'Atualizar', 'RANK_REFRESH', 0, C.GRAY, !r.loading, 28);
+    this.button(cx - 110, VH - 96, 220, 74, r.m3 ? '🧊 Ranking 3D' : '🟩 Ranking 2D', 'RANK_M3', 0, r.m3 ? '#2E6FA8' : '#3E7A2E', true, 26);
+    if (!this.touch) this.keyBadge('V', cx + 110 - 30, VH - 94);
     this.text(r.diff === RANK_DAILY ? 'Desafio de hoje: ' + dailyChallenge().date.split('-').reverse().join('/') + '  •  toque num jogador pra ver a build 🔍' : 'Ordem: vitória, onda e insetos  •  toque num jogador pra ver a build 🔍', cx, VH - 54, 18, 'rgba(255,255,255,0.6)', 'center');
     if (!this.touch) this.text('Setas: dificuldade  •  R: atualizar  •  Esc: voltar', cx, VH - 26, 16, 'rgba(255,255,255,0.45)', 'center');
     if (this.rankView) this.drawRankView();
@@ -1223,6 +1272,7 @@ class Ui {
     }
 
     this.drawAbilityGround();
+    this.drawGround5(false);
     // minas da Melancia
     for (const m of g.mines) {
       const armed = m.arm <= 0;
@@ -1269,7 +1319,10 @@ class Ui {
       ctx.beginPath(); ctx.ellipse(p.x, p.y + 23, 24, 7, 0, 0, Math.PI * 2); ctx.fill();
     }
 
-    for (const e of g.enemies) if (!e.dead) this.drawEnemy(e, inferno);
+    for (const e of g.enemies) {
+      if (e.dead) continue;
+      if (e.h > 0) { ctx.save(); ctx.translate(0, -e.h); this.drawEnemy(e, inferno); ctx.restore(); } else this.drawEnemy(e, inferno);
+    }
     for (const p of g.players) {
       if (!p.alive) { this.drawGhost(p); continue; }
       if (p.kind === 'alien') this.drawTentacles(p);
@@ -1277,6 +1330,7 @@ class Ui {
       for (const w of p.weapons) this.drawWeapon(w, p.laser.heat);
       if (p.kind === 'minions') this.drawMinions(p);
       this.drawAbilityOver(p);
+      this.drawPlayer5(p);
     }
     for (const p of g.players) if (p.alive && p.kind === 'laser') this.drawLaser(p);
     if (g.coop) {
@@ -1400,7 +1454,11 @@ class Ui {
 
   drawEnemy(e, inferno) {
     const ctx = this.ctx;
+    if (e.under && e.def.ai === AI_BURROW) return; // embaixo da terra: só o montinho no chão
     const size = e.radius * 2.5;
+    const fade = e.under ? 0.25 : 1; // mosca sumindo / grilo no ar
+    if (e.buffT > 0) this.circle(e.x, e.y, e.radius * 1.3, 'rgba(255,120,40,0.25)');
+    if (fade < 1) ctx.globalAlpha = fade;
     const squash = Math.sin(e.anim * 10) * 0.06;
     let tint = null, ox = 0;
     if (e.flash > 0) tint = '#FFFFFF';
@@ -1414,6 +1472,8 @@ class Ui {
     else if (e.burnTime > 0) tint = 'rgba(255,106,0,0.53)';
     else if (e.elite) tint = 'rgba(255,196,0,0.33)';
     else if (inferno) tint = 'rgba(220,30,0,0.3)';
+    else if (e.def.hue) tint = 'h' + e.def.hue;
+    if (e.def.ai === AI_KAMIKAZE && e.aiState === 1) { tint = Math.sin(this.time * 40) > 0 ? '#FFFFFF' : 'rgba(255,40,0,0.7)'; ox = (Math.random() - 0.5) * 6; }
     if (inferno) { // aura de fogo
       const g = ctx.createRadialGradient(e.x, e.y, e.radius * 0.4, e.x, e.y, e.radius * 1.6);
       g.addColorStop(0, 'rgba(255,90,0,0.35)'); g.addColorStop(1, 'rgba(255,40,0,0)');
@@ -1435,6 +1495,14 @@ class Ui {
       }
     }
     ctx.restore();
+    ctx.globalAlpha = 1;
+    if (e.def.ai === AI_SHIELDED) { // escudo virado pra frente
+      const fa = e.vfa !== undefined ? e.vfa : (e.fa || 0);
+      ctx.strokeStyle = e.stun > 0 ? 'rgba(144,202,249,0.4)' : '#90CAF9'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(e.x, e.y, e.radius * 1.25, fa - 0.95, fa + 0.95); ctx.stroke();
+      ctx.strokeStyle = '#E3F2FD'; ctx.lineWidth = 2; ctx.stroke();
+    }
+    if (e.stun > 0) this.emoji('💫', e.x, e.y - e.radius * 1.1, 22);
     if (e.elite) this.emoji('👑', e.x, e.y - e.radius * 1.2, 30);
     if (e.fear > 0 && !e.def.boss) this.emoji('😱', e.x + e.radius * 0.7, e.y - e.radius, 18);
     else if (e.freeze > 0) this.emoji('🧊', e.x + e.radius * 0.7, e.y - e.radius, 18);
@@ -1505,7 +1573,7 @@ class Ui {
 
   drawHud() {
     const g = this.game, p = g.player, vw = this.vw;
-    if (g.coop) this.drawTeamArrows();
+    if (g.coop && !g.mode3d) this.drawTeamArrows(); // no 3D o radar mostra os amigos
     // aviso de vida baixa: bordas vermelhas pulsando
     const frac = p.hp / p.maxHp();
     if (frac < 0.3 && !g.ending && p.alive) {
@@ -1545,6 +1613,7 @@ class Ui {
     }
 
     if (g.pvp !== 'duel' || p.kind !== 'laser') this.drawClassHud(p);
+    this.drawHud5(p);
     this.button(vw - 86, 16, 68, 68, 'II', 'PAUSE', 0, 'rgba(51,51,51,0.67)', true, 30);
     if (g.coop && this.mp.isGuest() && g.pvp !== 'prep') {
       // ping: tempo de ida e volta até o dono da sala
@@ -1594,8 +1663,9 @@ class Ui {
     }
     if (!j && !aj && g.wave === 1 && g.waveTime < 7 && !g.pvp) {
       let hint = this.touch ? 'Arraste o dedo para andar' : 'Use W A S D ou as setas para andar';
-      if (p.kind === 'laser') hint = this.touch ? 'Esquerda: andar  •  Direita: mirar e ATIRAR' : 'W A S D: andar  •  Mouse: mirar  •  Clique (ou Espaço): ATIRAR';
-      this.text(hint, vw / 2, VH - 110, 30, 'rgba(255,255,255,0.8)', 'center');
+      if (g.mode3d) hint = '';
+      else if (p.kind === 'laser') hint = this.touch ? 'Esquerda: andar  •  Direita: mirar e ATIRAR' : 'W A S D: andar  •  Mouse: mirar  •  Clique (ou Espaço): ATIRAR';
+      if (hint) this.text(hint, vw / 2, VH - 110, 30, 'rgba(255,255,255,0.8)', 'center');
     }
   }
 

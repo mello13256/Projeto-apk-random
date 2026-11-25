@@ -2,8 +2,9 @@
 
 Jogo no estilo *Brotato* para **Android, PC e celular**: um roguelite de arena em que você é um
 legume armado até os dentes, sobrevivendo a ondas de insetos que invadiram a horta.
-Tem **30 personagens**, **76 itens** (+ itens exclusivos), **6 dificuldades**, **Desafio do Dia**, **conquistas**,
-**multiplayer cooperativo e PvP**, ranking, contas e enquetes.
+Tem **modo 2D e modo 3D**, **30 personagens** (18 com habilidade ativa), **152 itens** (+ itens exclusivos),
+**18 tipos de insetos**, **7 dificuldades**, **Desafio do Dia**, **conquistas**, **multiplayer cooperativo e PvP**,
+ranking, contas e enquetes.
 
 ![Capa do Horta Hostil](docs/capa.png)
 
@@ -21,6 +22,32 @@ Precisa de Android 7.0 ou mais novo. Quem já tinha o app antigo pode instalar p
 O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ na barra de endereço;
 Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
 depois da primeira visita.
+
+## 🧊 Versão 5.0: modo 3D, habilidades ativas, Ascensão e o dobro de itens
+
+- **Modo 3D** (botão **🟩 2D / 🧊 3D** na escolha do legume, na sala do multiplayer e no Desafio do Dia), com
+  **3 câmeras** (botão 🎥 ou tecla **C**): **1ª pessoa**, **3ª pessoa** (atrás do ombro) e **de cima, inclinada**.
+  - **Sem mira automática para ninguém**: você mira e **segura** pra atacar (PC: mouse + clique, que trava o mouse
+    nas câmeras de 1ª/3ª pessoa; celular: lado direito da tela mira/gira e ataca enquanto segura).
+  - **Parry** (🛡️, **Espaço** ou **botão direito**): na hora certa, o golpe não machuca, o inseto fica tonto e
+    **tiros voltam** contra os insetos, bem mais fortes. Dá pra aumentar a janela com itens.
+  - Radar dos insetos em volta nas câmeras de 1ª e 3ª pessoa.
+  - O 3D é desenhado "na mão" (projeção em perspectiva no Canvas 2D, sem WebGL nem bibliotecas).
+- **Habilidades ativas**: 18 dos 30 legumes (60%) têm uma (botão ⭐ / tecla **Q**), como a Batata Frita da Batata,
+  o Esmagar do Tomatão, a Bomba de Fumaça da Cenoura, a Singularidade da Azeitona e a Fusão da Manga.
+- **Ascensão** 📈 (dificuldade nova): 20 ondas, começa mais fácil que o Fácil e fica quase impossível no fim
+  (a vida e o dano dos insetos sobem a cada onda, nascem mais e com mais elites).
+- **12 insetos novos**, cada um pede uma estratégia: Barata (vira duas), Mosquito (pica e foge), Grilo (pula onde
+  você estava), Mosca (teleporta), Percevejo (nuvem tóxica ao morrer), Cupim-Bomba (corre e explode), Aranha
+  Tecelã (teia que deixa lento), Besouro Escudeiro (escudo na frente: ataque pelos lados), Vespa Atiradora (rodeia
+  atirando rajadas), Minhoca (anda por baixo da terra), Fungo Curandeiro (cura os outros) e Formiga-General
+  (deixa os vizinhos mais fortes e chama reforços). Marcas vermelhas no chão avisam onde vai cair o golpe.
+- **76 itens novos** (152 no total), com efeitos novos: recarga da habilidade, parry maior, choque em cadeia,
+  cura no crítico, dano extra em elites/chefões, velocidade ao matar e atordoar.
+- **Ranking separado** para 2D e 3D (botão no ranking), inclusive no Desafio do Dia; 6 conquistas novas.
+
+> ⚠️ As regras do Firebase mudaram nesta versão (listas `d0_3d`…`d6_3d`, `daily3d` e a dificuldade 6):
+> cole o [`firebase-rules.json`](firebase-rules.json) de novo no console do Firebase.
 
 ## 🛡️ Versão 4.3: administrador do ranking
 
@@ -179,11 +206,16 @@ No celular, o lado **esquerdo** da tela é o analógico de andar e o lado **dire
 | 💀 Pesadelo | 20 | mais elites e muito mais dano |
 | 😈 Inferno | **35** | a máxima: mapa infernal, chefões nas ondas 10, 20, 30 e o **Besouro Infernal** na 35 |
 | ♾️ Infinito | **sem fim** | o Pesadelo sem limite de ondas (chefões a cada 10) — até onde você chega? |
+| 📈 Ascensão | 20 | começa mais fácil que o Fácil e fica quase impossível no fim |
 
 | | Computador | Celular / tablet |
 |---|---|---|
 | Andar | `W A S D` ou setas | arrastar o dedo |
 | Pausar / menu | `Esc` ou `P` | botão **II** |
+| Habilidade ativa | `Q` (ou `E`/`Shift`) | botão com o ícone dela |
+| 3D: mirar / atacar | mouse / segurar o clique (ou `J`) | lado direito da tela (segurar) |
+| 3D: parry | `Espaço` ou botão direito | botão 🛡️ |
+| 3D: câmera | `C` (1ª/3ª pessoa: setas ← → também giram) | botão 🎥 |
 | Melhorias / loja | clique ou `1`–`4`, `R` = rolar, `Enter` = próxima onda | tocar |
 | Tela cheia | `F` | automática |
 
@@ -249,8 +281,10 @@ pwa/                      o jogo (site e app usam os mesmos arquivos)
 └── js/
     ├── data.js           personagens, armas, itens, inimigos e dificuldades
     ├── game.js           regras: ondas, combate, classes, loja, duelo PvP
+    ├── game5.js          5.0: habilidades ativas, parry, insetos novos, Ascensão, mira manual
     ├── ui.js             telas, botões e controles
     ├── art.js            desenhos: partículas dos legumes, armas, projéteis, mapa do Inferno
+    ├── r3d.js            modo 3D: câmeras, projeção em perspectiva, radar e controles
     ├── sfx.js            sons e música gerados por código (sem arquivos de áudio)
     ├── net.js            Firebase (REST + tempo real) e conexão direta (WebRTC)
     ├── mp.js             multiplayer: salas, sincronização, cooperativo e PvP
@@ -274,6 +308,7 @@ segmento (o laser), vetores para movimento e mira, probabilidade, previsão de m
 ```bash
 npx http-server pwa              # abre o jogo em http://localhost:8080
 node pwa/sim.js 12               # o robô joga 12 partidas em cada dificuldade
+SIM3D=1 node pwa/sim.js 12 6     # 12 partidas da Ascensão no modo 3D (o robô mira e faz parry)
 node pwa/sim.js coop 4           # partidas cooperativas com 2, 3 e 4 robôs
 node pwa/sim.js duel 6           # 6 duelos PvP (15 rodadas de preparação + arena)
 node tools/fake-firebase.js 9000 # Firebase local: abra o jogo com ?db=http://localhost:9000

@@ -50,9 +50,9 @@ function sha256(str) {
   return H.map((x) => (x >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
-const GAME_VERSION = '4.3.1';
+const GAME_VERSION = '5.0';
 const PROGRESS_KEYS = ['bestWave', 'wins', 'totalKills', 'bestDiffWon', 'gamesPlayed', 'totalSeeds', 'bestEndless',
-  'bossKills', 'eliteKills', 'itemsBought', 'dailyDays'];
+  'bossKills', 'eliteKills', 'itemsBought', 'dailyDays', 'bestAscent', 'ascentWon', 'wins3d', 'parries', 'actives'];
 
 /** Junta o progresso de dois aparelhos: fica o maior de cada recorde. */
 function mergeProgress(local, remote) {

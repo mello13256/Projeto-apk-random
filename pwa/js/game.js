@@ -72,6 +72,7 @@ class Weapon {
   cooldown(p) {
     let speed = Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100) * p.rmod('atk');
     if (p.kind === 'berserk') speed *= 1 + Math.max(0, 1 - p.hp / p.maxHp()) * 0.6; // Laranja: fúria também acelera
+    if (p.popT > 0) speed *= 3; // Milho: Pipocar
     return Math.max(0.08, this.def.cooldown * TIER_CD[this.tier] / speed);
   }
   range(p) {
@@ -120,6 +121,7 @@ class Player {
     this.elemT = 0; this.revive = true; this.reviveWait = 0; this.roulette = -1; this.rhealT = 0;
     this.dashCd = 0; this.dashT = 0; this.dashX = 1; this.dashY = 0; this.dashHit = [];
     this.auraT = 0; this.shellHp = 0; this.lastInterest = 0;
+    this.reset5(); // habilidade ativa, parry e efeitos da 5.0
     this.stats = new Array(Stat.COUNT).fill(0);
     this.stats[Stat.HP] = 10;
     for (let i = 0; i < c.mods.length; i += 2) this.stats[c.mods[i]] += c.mods[i + 1];
@@ -143,7 +145,7 @@ class Player {
   rmod(k) { const r = this.roulette >= 0 ? ROULETTE[this.roulette] : null; return r && r[k] ? r[k] : 1; }
   /** Valor do atributo que vale de verdade (respeita o limite de Stat.CAP). */
   stat(i) { const c = Stat.CAP[i], v = this.stats[i]; return c && v > c ? c : v; }
-  speed() { return 240 * Math.max(0.3, 1 + this.stat(Stat.SPEED) / 100) * this.rmod('speed') * (this.dashT > 0 ? 4 : 1); }
+  speed() { return 240 * Math.max(0.3, 1 + this.stat(Stat.SPEED) / 100) * this.rmod('speed') * (this.dashT > 0 ? 4 : 1) * this.speed5(); }
   damageMult() {
     let m = Math.max(0.1, 1 + this.stats[Stat.DAMAGE] / 100) * (1 + this.growth) * this.rmod('dmg');
     if (this.kind === 'berserk') m *= 1 + Math.max(0, 1 - this.hp / this.maxHp()) * 1.5; // Laranja: fúria
@@ -257,9 +259,12 @@ class Game {
     this.duelTime = 0; this.countdown = 0; this.duelWinner = null; this.zoneTick = 0;
     this.mines = [];
     this.decoys = []; this.wells = []; this.echoes = []; // uvas falsas, buracos negros, tiros-eco
-    this.input = { aimAng: 0, fire: false, dash: false }; // mira manual (laser) e dash (Alface)
+    this.input = { aimAng: 0, fire: false, dash: false, skill: false, parry: false }; // mira, dash, habilidade e parry
+    this.mode3d = false;  // 5.0: partida em 3D (mira manual em todo mundo + parry)
+    this.zones = []; this.marks = []; this.delayed = []; // nuvens/teias, marcas de perigo no chão, efeitos com atraso
+    this.seenTips = {}; this.tip = ''; this.tipT = 0;
     this.daily = null;    // Desafio do Dia: {date, mod}
-    this.runStats = { bosses: 0, elites: 0, bought: 0 };
+    this.runStats = { bosses: 0, elites: 0, bought: 0, parries: 0, actives: 0 };
     this.foeSlow = 1;
     this.seedsCollected = 0; // sementes ganhas na partida (recordes)
     this.prepDowned = false;
@@ -290,14 +295,14 @@ class Game {
       const d = (dc.x - e.x) * (dc.x - e.x) + (dc.y - e.y) * (dc.y - e.y);
       if (d < bestD) { bestD = d; best = dc; }
     }
-    return best || this.nearestPlayer(e.x, e.y);
+    return best || this.nearestPlayer(e.x, e.y, true);
   }
 
   /** Jogador vivo mais perto do ponto (ou null). */
-  nearestPlayer(x, y) {
+  nearestPlayer(x, y, noSmoke) {
     let best = null, bestD = Infinity;
     for (const p of this.players) {
-      if (!p.alive) continue;
+      if (!p.alive || (noSmoke && p.smokeT > 0)) continue;
       const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
       if (d < bestD) { bestD = d; best = p; }
     }
@@ -350,7 +355,8 @@ class Game {
     this.offers.fill(null);
     this.paused = false;
     this.mines = []; this.decoys = []; this.wells = []; this.echoes = [];
-    this.runStats = { bosses: 0, elites: 0, bought: 0 };
+    this.runStats = { bosses: 0, elites: 0, bought: 0, parries: 0, actives: 0 };
+    this.seenTips = {}; this.tip = ''; this.tipT = 0;
     this.zone = null; this.duelWinner = null;
   }
 
@@ -413,6 +419,7 @@ class Game {
     this.waveTime = 0; this.waveDuration = 9999;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
     this.pickups = []; this.particles = []; this.texts = [];
+    this.zones = []; this.marks = []; this.delayed = [];
     this.boss = null; this.ending = false;
     this.zone = { x: WORLD_W / 2, y: WORLD_H / 2, r: 760, min: 120 };
     this.duelTime = 0; this.countdown = 3; this.zoneTick = 0;
@@ -423,6 +430,7 @@ class Game {
       p.tx = p.x; p.ty = p.y; p.alive = true; p.hp = p.maxHp(); p.iframes = 0; p.regenAcc = 0;
       p.facingLeft = Math.cos(a) > 0;
       p.revive = true; p.growth = 0; p.shieldCd = 0; p.roulette = -1;
+      p.reset5();
       for (const w of p.weapons) { w.cd = 0.5; w.attackT = -1; w.x = p.x; w.y = p.y; w.waveDamage = 0; w.owner = p; }
     });
     this.showBanner('DUELO!');
@@ -436,6 +444,7 @@ class Game {
     if (this.pvp === 'prep') this.waveDuration = Math.round(this.waveDuration * 0.75);
     if (this.dmod('short')) this.waveDuration = Math.round(this.waveDuration * this.dmod('short'));
     this.mines = []; this.decoys = []; this.wells = []; this.echoes = [];
+    this.zones = []; this.marks = []; this.delayed = [];
     this.foeSlow = 1;
     this.prepDowned = false;
     this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
@@ -455,6 +464,7 @@ class Game {
       p.laser.heat = 0; p.laser.over = false; p.laser.on = false;
       // classes novas: tudo recomeça a cada onda
       p.growth = 0; p.shieldCd = 0; p.dashT = 0;
+      p.reset5();
       if (p.reviveWait > 0) p.reviveWait--; else p.revive = true; // Fênix: recarrega a cada 2 ondas
       p.dashCd = 0; p.fearCd = 3; p.decoyCd = 4; p.gravCd = 3;
       p.shellHp = Math.min(SP_CAP_SHIELD, p.specials[SP_SHIELD]);
@@ -522,6 +532,7 @@ class Game {
       alien: won && full && p.stats[Stat.RANGE] > 100,
       char: CHARS.indexOf(p.character), daily: this.daily ? this.daily.date : null,
       bosses: this.runStats.bosses, elites: this.runStats.elites, bought: this.runStats.bought,
+      mode3d: this.mode3d, parries: this.runStats.parries || 0, actives: this.runStats.actives || 0,
     };
   }
 
@@ -832,7 +843,8 @@ class Game {
     const me = this.player;
     if (me && !me.remote) {
       me.aimAng = this.input.aimAng; me.wantFire = !!this.input.fire;
-      if (this.input.dash) { this.input.dash = false; if (me.kind === 'dash') this.tryDash(me); }
+      if (this.input.dash) { this.input.dash = false; if (me.kind === 'dash') this.useActive(me); }
+      this.readInput5(me);
     }
     if (this.pvp === 'duel') { this.updateDuel(dt, jx, jy); return; }
     if (this.ending) {
@@ -853,6 +865,7 @@ class Game {
     this.separateEnemies();
     this.updateWeapons(dt);
     this.updateAbilities(dt);
+    this.update5(dt);
     this.updateBullets(dt);
     this.updateEnemyBullets(dt);
     this.updatePickups(dt);
@@ -892,6 +905,7 @@ class Game {
     }
     this.updateWeapons(dt);
     this.updateAbilities(dt);
+    this.update5(dt);
     this.updateBullets(dt);
     this.updateEffects(dt);
     this.cleanup();
@@ -931,6 +945,7 @@ class Game {
   /** Dano de um jogador em outro (duelo): reduzido, com armadura e esquiva. */
   hitPlayer(q, dmg, crit, kx, ky, kb, src, owner) {
     if (!q.alive || q.iframes > 0) return;
+    if (this.parried(q, null)) return;
     const real = Math.max(1, Math.round(dmg * DUEL_DMG));
     const before = q.hp;
     this.damagePlayer(q, real, null, 0.22);
@@ -1076,7 +1091,7 @@ class Game {
   updateGravity(p, dt) {
     p.gravCd -= dt;
     if (p.gravCd > 0 || this.ending) return;
-    const t = this.nearestFoe(p, p.x, p.y, 450, null);
+    const t = this.manual ? (p.wantFire ? { x: this.aimPoint(p, 280)[0], y: this.aimPoint(p, 280)[1] } : null) : this.nearestFoe(p, p.x, p.y, 450, null);
     if (!t) return;
     p.gravCd = 7 / Math.sqrt(this.atkFactor(p));
     this.wells.push({ x: t.x, y: t.y, t: 2, owner: p });
@@ -1084,16 +1099,17 @@ class Game {
   updateWells(dt) {
     for (const wl of this.wells) {
       wl.t -= dt;
+      const big = wl.big ? 1.5 : 1;
       for (const e of this.enemies) {
         if (e.dead || e.def.boss) continue;
         const dx = wl.x - e.x, dy = wl.y - e.y, d = Math.hypot(dx, dy);
-        if (d > 270 || d < 6) continue;
-        const pull = 220 * dt * (1 - d / 300);
+        if (d > 270 * big || d < 6) continue;
+        const pull = 220 * big * dt * (1 - d / (300 * big));
         e.x += dx / d * pull; e.y += dy / d * pull;
       }
       if (wl.t <= 0 && !this.ending) {
         const p = wl.owner;
-        this.explodeAt(wl.x, wl.y, 170, this.abilityDamage(p, 15, 2, 3), false, 10, 0, p.extraSrc, p);
+        this.explodeAt(wl.x, wl.y, 170 * big, this.abilityDamage(p, 15, 2, 3) * (wl.big ? 2 : 1), false, 10, 0, p.extraSrc, p);
         this.burst(wl.x, wl.y, 24, '120,60,200', 260, 7, 0.6);
       }
     }
@@ -1111,8 +1127,8 @@ class Game {
       if (dx * dx + dy * dy > 90 * 90) continue;
       b.dead = true;
       p.mirrorCd = 1 / Math.sqrt(this.atkFactor(p));
-      const t = this.nearestFoe(p, p.x, p.y, 700, null);
-      const a = t ? Math.atan2(t.y - p.y, t.x - p.x) : Math.atan2(-dy, -dx) + Math.PI;
+      const t = this.manual ? null : this.nearestFoe(p, p.x, p.y, 700, null);
+      const a = this.manual ? p.aimAng : t ? Math.atan2(t.y - p.y, t.x - p.x) : Math.atan2(-dy, -dx) + Math.PI;
       const dmg = Math.max(1, Math.round(((b.damage || 3) * 4 + p.stats[Stat.RANGED] * 2 + this.wave * 1.5) * p.damageMult()));
       this.bullets.push({
         x: p.x, y: p.y, vx: Math.cos(a) * 760, vy: Math.sin(a) * 760, life: 1.2, damage: dmg, crit: false,
@@ -1127,8 +1143,8 @@ class Game {
 
   /** Manga Elementar: 0 = fogo, 1 = gelo, 2 = raio (troca a cada 5 s). */
   elementOf(p) { return Math.floor(p.elemT / 5) % 3; }
-  elementHit(p, e, dmg) {
-    const el = this.elementOf(p);
+  elementHit(p, e, dmg, forced) {
+    const el = forced !== undefined ? forced : this.elementOf(p);
     if (el === 0) {
       e.burnTime = 2.1;
       e.burnDamage = Math.max(e.burnDamage || 0, Math.round((3 + p.stats[Stat.ELEMENTAL] * 1.2) * p.damageMult()));
@@ -1247,7 +1263,7 @@ class Game {
     this.mines = this.mines.filter((m) => !m.dead && m.owner.alive !== undefined);
   }
 
-  minionCount(p) { return Math.min(6, 2 + Math.floor((p.level - 1) / 4)); }
+  minionCount(p) { return Math.min(6, 2 + Math.floor((p.level - 1) / 4)) + (p.swarmT > 0 ? 3 : 0); }
   minionPos(p, i, n) {
     const a = p.minionAng + Math.PI * 2 * i / n;
     return [p.x + Math.cos(a) * 66, p.y + Math.sin(a) * 50 - 6];
@@ -1283,7 +1299,7 @@ class Game {
     for (const f of foes) if (f.ramCd > 0) f.ramCd -= dt;
     if (!p.moving || this.ending || (this.pvp === 'duel' && this.countdown > 0)) return;
     const sp = p.speed() / 240;
-    const dmg = (6 + p.stats[Stat.ARMOR] * 1.5 + p.stats[Stat.MELEE] * 1.5 + this.wave * 0.9) * sp * p.damageMult();
+    const dmg = (6 + p.stats[Stat.ARMOR] * 1.5 + p.stats[Stat.MELEE] * 1.5 + this.wave * 0.9) * sp * p.damageMult() * (p.rollT > 0 ? 3 : 1);
     for (const f of foes) {
       if (f.dead || f.ramCd > 0) continue;
       const r = f.radius + p.radius + 6;
@@ -1349,7 +1365,7 @@ class Game {
   hpMult() { return Game.rawHp(this.wave - 1) * this.coopHp(); }
   /** Chefe numa onda depois da "dele" (Infinito, Inferno) fica mais forte. */
   bossScale(d) { return Math.max(1, Game.rawHp(this.wave - 1) / Game.rawHp(d.minWave - 1)); }
-  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * DIFF_SPAWN[this.difficulty] / this.coopSpawn() / (this.dmod('spawn') || 1); }
+  spawnInterval() { return Math.max(0.3, 1.6 - this.wave * 0.065) * this.diffSpawn() / this.coopSpawn() / (this.dmod('spawn') || 1); }
   enemyCap() { return Math.min(175 + 15 * (this.players.length - 1), 70 + this.wave * 5 + 15 * (this.players.length - 1)); }
 
   updateSpawns(dt) {
@@ -1380,9 +1396,11 @@ class Game {
     const w = this.wave;
     const weights = SPAWNABLE.map((d) => {
       if (w < d.minWave) return 0;
+      if (d.limit && this.aliveOf(d) >= d.limit) return 0;
       if (d === E.LAGARTA) return 10;
       if (d === E.VESPA) return 4 + Math.floor(w / 3);
       if (d === E.ARANHA || d === E.MARIPOSA) return 3 + Math.floor(w / 4);
+      if (d.minWave >= 2 && SPAWNABLE.indexOf(d) >= 6) return w < d.minWave + 2 ? 1 : 1 + Math.floor(w / 8); // insetos da 5.0 (entram devagar)
       return 2 + Math.floor(w / 5);
     });
     let r = this.rng.int(weights.reduce((a, b) => a + b, 0));
@@ -1396,19 +1414,24 @@ class Game {
   spawnEnemy(d, x, y) {
     // Infinito: depois da onda 20 os insetos ficam cada vez mais fortes (senão nunca acaba)
     const extra = this.difficulty === DIFF_ENDLESS && this.pvp !== 'prep' ? Math.max(0, this.wave - 20) : 0;
-    const maxHp = d.hp * (d.boss ? this.coopHp() * this.bossScale(d) : this.hpMult()) * DIFF_HP[this.difficulty] * Math.pow(1.09, extra);
+    const maxHp = d.hp * (d.boss ? this.coopHp() * this.bossScale(d) : this.hpMult()) * this.diffHp() * Math.pow(1.09, extra);
     const baseDmg = Math.max(1, Math.round((d.damage + d.damagePerWave * (this.wave - 1)) * Math.pow(1.07, extra)));
     const e = {
       id: this.nextEnemyId++, def: d, x, y, vx: 0, vy: 0, hp: maxHp, maxHp, radius: d.radius,
       speed: d.speed * (0.9 + this.rng.float() * 0.2) * (this.dmod('foeSpeed') || 1),
-      damage: Math.max(1, Math.round(baseDmg * DIFF_DMG[this.difficulty])),
+      damage: Math.max(1, Math.round(baseDmg * this.diffDmg())),
       flash: 0, dead: false, facingLeft: true, anim: 0,
       burnTime: 0, burnTick: 0, burnDamage: 0, burnSource: null, slowTime: 0, elite: false,
       aiState: 0, aiTimer: 1 + this.rng.float() * 1.5, aiTimer2: d.boss ? 6 : 0, dashX: 0, dashY: 0,
       spiral: d.boss ? 0 : this.rng.float() * 6.28,
+      stun: 0, stunCd: 0, under: d.ai === AI_BURROW, h: 0, buffT: 0,
     };
+    if (d.ai === AI_BURROW) e.aiTimer = 2.5;
+    if (d.ai === AI_WEB) e.aiTimer2 = 2 + this.rng.float() * 2;
+    if (d.ai === AI_COMMANDER) e.aiTimer = 4;
+    this.noteTip(d);
     // Poucos elites por onda: 1 a partir da onda 5, 2 a partir da 10, 3 a partir da 15.
-    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 ? 1 : 0) + (this.dmod('elites') ? 3 : 0);
+    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 && this.difficulty !== DIFF_ASCENT ? 1 : 0) + (this.dmod('elites') ? 3 : 0) + this.diffElites();
     const eliteChance = (0.012 + 0.004 * this.difficulty) * (this.dmod('elites') || 1);
     if (!d.boss && this.elitesThisWave < maxElites && d !== E.VESPA && this.rng.float() < eliteChance) {
       this.elitesThisWave++;
@@ -1460,14 +1483,19 @@ class Game {
 
       if (e.acid > 0) e.acid -= dt;
       if (e.ramCd > 0) e.ramCd -= dt;
-      const p = this.targetFor(e) || ps[0]; // persegue o jogador vivo mais perto (ou a uva falsa)
+      // persegue o jogador vivo mais perto (ou a uva falsa); com a fumaça da Cenoura, fica perdido
+      const p = this.targetFor(e) || { x: e.x + Math.cos(e.spiral + e.anim * 0.7) * 120, y: e.y + Math.sin(e.spiral + e.anim * 0.7) * 120 };
       const dx = p.x - e.x, dy = p.y - e.y;
       const d = Math.hypot(dx, dy);
       let nx = d > 0.001 ? dx / d : 0, ny = d > 0.001 ? dy / d : 0;
       if (e.fear > 0) { e.fear -= dt; if (!e.def.boss) { nx = -nx; ny = -ny; } } // Alho: foge com medo
       let mx = 0, my = 0, sp = e.speed * this.foeSlow;
 
-      switch (e.def.ai) {
+      if (e.stun > 0) e.stun -= dt;
+      if (e.stunCd > 0) e.stunCd -= dt;
+      if (e.buffT > 0) { e.buffT -= dt; sp *= 1.3; }
+      switch (e.stun > 0 ? -1 : e.def.ai) {
+        case -1: break; // atordoado
         case AI_CHASE:
           mx = nx; my = ny;
           break;
@@ -1508,9 +1536,14 @@ class Game {
           this.updateAntBoss(e, dt, nx, ny);
           if (e.aiState === 0) { mx = nx; my = ny; } else if (e.aiState === 1) { mx = nx * 0.3; my = ny * 0.3; } else if (e.aiState === 3) { mx = e.dashX; my = e.dashY; sp = 650; }
           break;
+        default: { // insetos novos da 5.0 (game5.js)
+          const r = this.ai5(e, dt, p, d, nx, ny);
+          mx = r[0]; my = r[1]; sp = r[2] * (e.buffT > 0 ? 1.3 : 1);
+          if (e.dead) continue;
+        }
       }
 
-      if (e.def.ai === AI_ZIGZAG) {
+      if (e.def.ai === AI_ZIGZAG && !(e.stun > 0)) {
         const wob = Math.sin(e.anim * 5 + e.spiral) * 1.1;
         mx = nx - ny * wob; my = ny + nx * wob;
         const len = Math.hypot(mx, my) + 0.0001;
@@ -1524,10 +1557,11 @@ class Game {
       if (Math.abs(mx) > 0.05) e.facingLeft = mx < 0;
       e.x = clamp(e.x, e.radius * 0.5, WORLD_W - e.radius * 0.5);
       e.y = clamp(e.y, e.radius * 0.5, WORLD_H - e.radius * 0.5);
+      if (e.under) continue; // embaixo da terra, sumida ou no ar: não encosta
       for (const q of ps) {
         if (!q.alive) continue;
         const r = e.radius + q.radius - (q.remote ? 16 : 8); // quem está longe tem um pouco de folga (atraso da rede)
-        if ((q.x - e.x) * (q.x - e.x) + (q.y - e.y) * (q.y - e.y) < r * r) this.damagePlayer(q, e.damage, e);
+        if ((q.x - e.x) * (q.x - e.x) + (q.y - e.y) * (q.y - e.y) < r * r) this.damagePlayer(q, e.buffT > 0 ? Math.round(e.damage * 1.3) : e.damage, e);
       }
     }
   }
@@ -1630,11 +1664,14 @@ class Game {
   }
 
   fireEnemyBullet(x, y, angle, speed, damage) {
-    this.enemyBullets.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false });
+    const b = { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false };
+    this.enemyBullets.push(b);
+    return b;
   }
 
   damagePlayer(p, dmg, source, iframes) {
     if (p.iframes > 0 || !p.alive || this.state !== 'PLAYING' || this.ending) return;
+    if (this.parried(p, source)) return; // 3D: parry na hora certa
     if (p.kind === 'barrier' && p.shieldCd <= 0) { // Abacate: o escudo bloqueia o golpe inteiro
       p.shieldCd = 6;
       p.iframes = 0.4;
@@ -1649,7 +1686,7 @@ class Game {
       p.iframes = 0.25;
       return;
     }
-    let d = Math.max(1, Math.round(dmg * p.armorFactor()));
+    let d = Math.max(1, Math.round(dmg * p.armorFactor() * (p.wallT > 0 ? 0.2 : 1)));
     if (p.shellHp > 0) { // Casca de Ovo: escudo que absorve dano no começo da onda
       const a = Math.min(p.shellHp, d);
       p.shellHp -= a; d -= a;
@@ -1698,6 +1735,7 @@ class Game {
       }
       w.cd -= dt;
       if (w.attacking()) { this.updateMelee(w, dt); continue; }
+      if (this.manual) { this.manualWeapon(p, w, dt); continue; } // 3D: sem mira automática
       w.tipX = w.x; w.tipY = w.y;
       const t = this.nearestFoe(p, w.x, w.y, w.range(p), null);
       if (!t) {
@@ -1739,7 +1777,7 @@ class Game {
     w.tipY = w.y + w.dirY * ext;
     const hr = w.def.hitRadius;
     for (const e of this.foesOf(w.owner)) {
-      if (e.dead || w.hitList.includes(e)) continue;
+      if (e.dead || e.under || w.hitList.includes(e)) continue;
       const r = e.radius + hr;
       const dx = e.x - w.tipX, dy = e.y - w.tipY;
       if (dx * dx + dy * dy < r * r) {
@@ -1780,7 +1818,7 @@ class Game {
 
   rollDamage(w) {
     let d = w.baseDamage(w.owner);
-    this.lastCrit = this.rng.int(100) < w.critChance(w.owner);
+    this.lastCrit = this.rng.int(100) < w.critChance(w.owner) || w.owner.smokeT > 0;
     if (this.lastCrit) d *= w.def.critMult;
     return Math.max(1, Math.round(d));
   }
@@ -1805,7 +1843,7 @@ class Game {
         continue;
       }
       for (const e of this.foesOf(b.owner)) {
-        if (e.dead || b.hit.includes(e)) continue;
+        if (e.dead || e.under || b.hit.includes(e)) continue;
         const dx = e.x - b.x, dy = e.y - b.y;
         const r = e.radius + b.radius;
         if (dx * dx + dy * dy >= r * r) continue;
@@ -1868,7 +1906,13 @@ class Game {
         if (!p.alive) continue;
         const r = p.radius * (p.remote ? 0.6 : 0.8) + b.radius;
         const dx = p.x - b.x, dy = p.y - b.y;
-        if (dx * dx + dy * dy < r * r) { b.dead = true; this.damagePlayer(p, b.damage); break; }
+        if (dx * dx + dy * dy < r * r) {
+          if (this.mode3d && p.parryT > 0 && p.iframes <= 0) { this.reflectBullet(p, b); break; }
+          b.dead = true;
+          if (b.web && p.iframes <= 0) p.webT = Math.max(p.webT || 0, 2);
+          this.damagePlayer(p, b.damage);
+          break;
+        }
       }
     }
   }
@@ -1878,6 +1922,7 @@ class Game {
     if (e.dead) return;
     if (e.acid > 0) dmg = dmg * 1.15; // Limão: ácido amolece o inseto
     const who = owner || (src && src.owner) || null;
+    dmg = this.hitMods5(e, dmg, crit, kx, ky, src, who);
     if (src) {
       const real = Math.round(Math.min(dmg, Math.max(0, e.hp)));
       src.waveDamage += real;
@@ -1911,13 +1956,15 @@ class Game {
     }
     const p = owner || (src && src.owner) || this.players[0];
     this.tryLifesteal(p, src);
-    if (e.hp <= 0) this.killEnemy(e, p);
+    this.afterHit5(e, dmg, crit, src, who);
+    if (e.hp <= 0 && !e.dead) this.killEnemy(e, p);
     else this.snd('HIT');
   }
 
   killEnemy(e, owner) {
     e.dead = true;
     this.kills++;
+    this.onKill5(e, owner || this.players[0]);
     if (e.def.boss) this.runStats.bosses++;
     if (e.elite) this.runStats.elites++;
     const drops = e.elite ? e.def.drops * 4 : e.def.drops;
@@ -2071,7 +2118,7 @@ class Game {
     if (this.state !== 'SHOP' || !this.player || this.coop || this.daily) return null;
     return JSON.stringify(Object.assign({
       v: 2, diff: this.difficulty, wave: this.wave, kills: this.kills, harvest: this.lastHarvest, rerolls: this.shopRerolls,
-      seeds: this.seedsCollected,
+      seeds: this.seedsCollected, m3: this.mode3d ? 1 : 0,
     }, playerToData(this.player), {
       offers: this.offers.map((o) => (!o ? null : o.weapon
         ? ['W', ALL_WEAPONS.indexOf(o.weapon), o.tier, o.price, o.locked ? 1 : 0]
@@ -2095,6 +2142,7 @@ class Game {
       this.coop = false; this.pvp = ''; this.mines = []; this.zone = null;
       this.seedsCollected = d.seeds | 0;
       this.difficulty = d.diff; this.wave = d.wave; this.kills = d.kills;
+      this.mode3d = !!d.m3;
       this.lastHarvest = d.harvest; this.shopRerolls = d.rerolls;
       this.paused = false; this.ending = false;
       this.enemies = []; this.telegraphs = []; this.bullets = []; this.enemyBullets = [];
@@ -2110,7 +2158,7 @@ class Game {
   nearestEnemy(x, y, range, exclude) {
     let best = null, bestD = Infinity;
     for (const e of this.enemies) {
-      if (e.dead || (exclude && exclude.includes(e))) continue;
+      if (e.dead || e.under || (exclude && exclude.includes(e))) continue;
       const d = Math.hypot(e.x - x, e.y - y) - e.radius;
       if (d < range && d < bestD) { bestD = d; best = e; }
     }

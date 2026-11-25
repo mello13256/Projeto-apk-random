@@ -27,6 +27,7 @@
   const ui = new Ui(game, prefs, sfx);
   const mp = new Multiplayer(game, ui);
   ui.mp = mp;
+  ui.canvasEl = canvas; // 3D: trava o mouse para girar a câmera
   ui.account = new Account(prefs);
   window.hortaHostil = { game, ui, mp, prefs }; // útil para depurar no console
 
@@ -65,26 +66,41 @@
     const r = canvas.getBoundingClientRect();
     return ui.toVirtual((e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height);
   };
+  let lockAt = 0; // quando o mouse foi travado/solto (3D)
   const pid = (e) => (e.pointerType === 'mouse' ? 'mouse' : e.pointerId);
   canvas.addEventListener('pointerdown', (e) => {
     sfx.unlock();
     setTouch(e.pointerType !== 'mouse');
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* mouse travado (3D) */ }
     const [x, y] = toVirtual(e);
+    if (e.pointerType === 'mouse' && e.button === 2) { if (ui.is3d()) ui.parryQueued = true; e.preventDefault(); return; } // 3D: botão direito = parry
     ui.onMove(pid(e), x, y);
     ui.onDown(pid(e), x, y);
     e.preventDefault();
   });
   canvas.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'mouse' && (e.movementX || e.movementY)) setTouch(false);
+    // (o Chrome às vezes manda um pulo enorme logo depois de travar o mouse: ignora)
+    if (e.pointerType === 'mouse' && e.movementX && Math.abs(e.movementX) < 250 && performance.now() - lockAt > 120
+      && (document.pointerLockElement === canvas || ui.mouseHeld)) ui.onLook(e.movementX);
+    if (document.pointerLockElement === canvas) return; // mouse travado: a posição não muda
     const [x, y] = toVirtual(e);
     ui.onMove(pid(e), x, y);
   });
-  const up = (e) => { const [x, y] = toVirtual(e); ui.onUp(pid(e), x, y); };
+  const up = (e) => {
+    if (e.pointerType === 'mouse' && e.button === 2) return;
+    if (document.pointerLockElement === canvas && e.pointerType === 'mouse') { ui.mouseHeld = false; return; }
+    const [x, y] = toVirtual(e); ui.onUp(pid(e), x, y);
+  };
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', () => ui.releaseAll());
   canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { ui.mouseX = ui.mouseY = -1; } });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  // 3D: soltou o mouse (Esc) no meio da partida -> pausa, pra dar pra clicar no menu
+  document.addEventListener('pointerlockchange', () => {
+    lockAt = performance.now();
+    if (!document.pointerLockElement && ui.freeLook() && !game.coop && !game.paused) game.paused = true;
+  });
 
   // --- Teclado ---
   const GAME_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'];

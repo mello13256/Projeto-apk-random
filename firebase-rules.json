@@ -4,12 +4,12 @@
     ".write": false,
     "ranking": {
       "$diff": {
-        ".read": "$diff.matches(/^d[0-5]$/)",
+        ".read": "$diff.matches(/^d[0-6](_3d)?$/)",
         ".indexOn": [
           "score"
         ],
         "$id": {
-          ".write": "($diff.matches(/^d[0-5]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child($diff).child('t').isNumber() && now - root.child('runs').child($id).child($diff).child('t').val() >= (newData.child('wave').val() - 1) * 12000) || (root.child('admin').child('key').isString() && newData.parent().parent().parent().child('adminProof').child('k').val() === root.child('admin').child('key').val() && newData.parent().parent().parent().child('adminProof').child('t').val() === now)",
+          ".write": "($diff.matches(/^d[0-6](_3d)?$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child($diff).child('t').isNumber() && now - root.child('runs').child($id).child($diff).child('t').val() >= (newData.child('wave').val() - 1) * 12000) || (root.child('admin').child('key').isString() && newData.parent().parent().parent().child('adminProof').child('k').val() === root.child('admin').child('key').val() && newData.parent().parent().parent().child('adminProof').child('t').val() === now)",
           ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
@@ -18,10 +18,10 @@
             ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 29"
           },
           "wave": {
-            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999 && (newData.val() <= 20 || ($diff === 'd4' && newData.val() <= 35) || $diff === 'd5')"
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999 && (newData.val() <= 20 || ($diff.matches(/^d4(_3d)?$/) && newData.val() <= 35) || $diff.matches(/^d5(_3d)?$/))"
           },
           "won": {
-            ".validate": "newData.isBoolean() && (newData.val() === false || ($diff.matches(/^d[0-3]$/) && newData.parent().child('wave').val() === 20) || ($diff === 'd4' && newData.parent().child('wave').val() === 35))"
+            ".validate": "newData.isBoolean() && (newData.val() === false || ($diff.matches(/^d[0-36](_3d)?$/) && newData.parent().child('wave').val() === 20) || ($diff.matches(/^d4(_3d)?$/) && newData.parent().child('wave').val() === 35))"
           },
           "kills": {
             ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
@@ -92,10 +92,55 @@
         }
       }
     },
+    "daily3d": {
+      "$day": {
+        ".read": "$day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/)",
+        ".indexOn": [
+          "score"
+        ],
+        "$id": {
+          ".write": "($day.matches(/^20[0-9][0-9]-[01][0-9]-[0-3][0-9]$/) && $id.matches(/^[ad][a-z0-9]{15,24}$/) && newData.exists() && (!data.exists() || newData.child('score').val() > data.child('score').val()) && root.child('runs').child($id).child('daily3d').child('t').isNumber() && now - root.child('runs').child($id).child('daily3d').child('t').val() >= (newData.child('wave').val() - 1) * 12000) || (root.child('admin').child('key').isString() && newData.parent().parent().parent().child('adminProof').child('k').val() === root.child('admin').child('key').val() && newData.parent().parent().parent().child('adminProof').child('t').val() === now)",
+          ".validate": "newData.hasChildren(['name', 'character', 'wave', 'won', 'kills', 'level', 'platform', 'score', 'createdAt'])",
+          "name": {
+            ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
+          },
+          "character": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 29"
+          },
+          "wave": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 15"
+          },
+          "won": {
+            ".validate": "newData.isBoolean() && (newData.val() === false || newData.parent().child('wave').val() === 15)"
+          },
+          "kills": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 999999"
+          },
+          "level": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 999"
+          },
+          "platform": {
+            ".validate": "newData.val() === 'web' || newData.val() === 'android'"
+          },
+          "score": {
+            ".validate": "newData.isNumber() && ((newData.parent().child('won').val() === true && newData.val() === 100000000 + newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()) || (newData.parent().child('won').val() === false && newData.val() === newData.parent().child('wave').val() * 1000000 + newData.parent().child('kills').val()))"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber() && newData.val() <= now"
+          },
+          "$other": {
+            ".validate": false
+          },
+          "b": {
+            ".validate": "newData.isString() && newData.val().length <= 1000"
+          }
+        }
+      }
+    },
     "runs": {
       "$id": {
         "$slot": {
-          ".write": "$id.matches(/^[ad][a-z0-9]{15,24}$/) && ($slot.matches(/^d[0-5]$/) || $slot === 'daily') && newData.exists()",
+          ".write": "$id.matches(/^[ad][a-z0-9]{15,24}$/) && ($slot.matches(/^d[0-6](_3d)?$/) || $slot === 'daily' || $slot === 'daily3d') && newData.exists()",
           ".validate": "newData.hasChildren(['t'])",
           "t": {
             ".validate": "newData.isNumber() && newData.val() === now"
@@ -130,7 +175,7 @@
               ".validate": "newData.isString() && newData.val().length <= 20"
             },
             "diff": {
-              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 5"
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 6"
             },
             "st": {
               ".validate": "newData.val() === 'lobby' || newData.val() === 'game' || newData.val() === 'closed'"
@@ -149,6 +194,9 @@
             },
             "mode": {
               ".validate": "newData.val() === 'coop' || newData.val() === 'pvp'"
+            },
+            "m3": {
+              ".validate": "newData.isBoolean()"
             }
           },
           "roster": {

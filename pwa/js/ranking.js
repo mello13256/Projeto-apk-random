@@ -20,10 +20,14 @@ const Ranking = {
    * Os 20 melhores de uma dificuldade, do maior para o menor.
    * Cada jogador aparece uma vez só (a melhor partida dele), mesmo que existam registros antigos repetidos.
    */
-  async top(diff) { return this.topAt(`${RANKING_URL}/d${diff}`); },
+  async top(diff, m3) { return this.topAt(this.boardUrl(diff, m3)); },
 
-  /** Ranking do Desafio do Dia (date = AAAA-MM-DD). */
-  dailyUrl(date) { return RANKING_URL.replace(/\/ranking$/, '/daily/') + date; },
+  /** Nome da lista de uma dificuldade: d0..d6 (2D) ou d0_3d..d6_3d (3D, ranking separado). */
+  board(diff, m3) { return 'd' + diff + (m3 ? '_3d' : ''); },
+  boardUrl(diff, m3) { return RANKING_URL + '/' + this.board(diff, m3); },
+
+  /** Ranking do Desafio do Dia (date = AAAA-MM-DD); o 3D tem o dele. */
+  dailyUrl(date, m3) { return RANKING_URL.replace(/\/ranking$/, m3 ? '/daily3d/' : '/daily/') + date; },
 
   async topAt(base) {
     const res = await fetch(`${base}.json?orderBy=%22score%22&limitToLast=80`, { cache: 'no-store' });

@@ -1,12 +1,12 @@
 // Simulador: o robô joga sozinho para testar a lógica.
-// Uso: node pwa/sim.js [partidas] [dificuldade]        (modo solo; dificuldades 0 a 5)
+// Uso: node pwa/sim.js [partidas] [dificuldade]        (modo solo; dificuldades 0 a 6; SIM3D=1 = modo 3D)
 //      node pwa/sim.js coop [partidas] [jogadores]       (multiplayer, tudo num computador só)
 //      node pwa/sim.js duel [duelos]                      (PvP: 15 rodadas de preparação + duelo)
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-for (const f of ['data.js', 'game.js']) vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'js', f), 'utf8'), { filename: f });
+for (const f of ['data.js', 'game.js', 'game5.js']) vm.runInThisContext(fs.readFileSync(path.join(__dirname, 'js', f), 'utf8'), { filename: f });
 vm.runInThisContext(`
 function bot(g, p) {
   let fx = 0, fy = 0, danger = 0, nearest = null, nearestD = Infinity;
@@ -33,16 +33,37 @@ function bot(g, p) {
     const dx = p.x - b.x, dy = p.y - b.y, d2 = dx * dx + dy * dy + 1, w = 6000 / d2;
     fx += dx / Math.sqrt(d2) * w; fy += dy / Math.sqrt(d2) * w;
   }
+  // foge das marcas vermelhas no chão (pulo do grilo, minhoca, cupim) e das nuvens fedidas
+  for (const m of g.marks || []) {
+    if (!m.bad) continue;
+    const dx = p.x - m.x, dy = p.y - m.y, d = Math.hypot(dx, dy) + 0.1;
+    if (d < m.r + p.radius + 30) { const w = 4 * (m.r + p.radius + 30 - d) / (m.r + 30); fx += dx / d * w; fy += dy / d * w; }
+  }
+  for (const z of g.zones || []) {
+    if (z.kind !== 'stink' && z.kind !== 'web') continue;
+    const dx = p.x - z.x, dy = p.y - z.y, d = Math.hypot(dx, dy) + 0.1;
+    if (d < z.r + p.radius + 10) { fx += dx / d * 1.5; fy += dy / d * 1.5; }
+  }
   fx += (WORLD_W / 2 - p.x) / 900; fy += (WORLD_H / 2 - p.y) / 900;
   if (p.kind === 'dash' && danger > 1.5) { if (p === g.player) g.input.dash = true; else g.tryDash(p); }
-  // Cyborg: mira manual no inseto mais perto e atira se estiver no alcance
-  if (p.kind === 'laser') {
-    const st = g.laserStats(p);
+  // Cyborg (e todo mundo no 3D): mira no inseto mais perto, com um errinho de mão, e ataca se estiver no alcance
+  if (p.kind === 'laser' || g.manual) {
+    const range = p.kind === 'laser' ? g.laserStats(p).range : Math.max(...p.weapons.map((w) => w.range(p)));
     if (nearest) {
-      p.aimAng = Math.atan2(nearest.y - p.y, nearest.x - p.x);
-      p.wantFire = nearestD < st.range + 20;
+      p.aimAng = Math.atan2(nearest.y - p.y, nearest.x - p.x) + (g.manual ? (Math.random() - 0.5) * 0.25 : 0);
+      p.wantFire = nearestD < range + 20;
     } else p.wantFire = false;
-    if (p === g.player) g.input = { aimAng: p.aimAng, fire: p.wantFire };
+    if (p === g.player) { g.input.aimAng = p.aimAng; g.input.fire = p.wantFire; }
+  }
+  // habilidade ativa quando tem inseto perto
+  if (p.character.active && !(p.activeCd > 0) && p.kind !== 'dash' && nearest && (nearestD < 260 || danger > 1)) {
+    if (p === g.player) g.input.skill = true; else g.useActive(p);
+  }
+  // parry (3D): tenta quando um tiro ou inseto está quase encostando (acerta mais ou menos metade das vezes)
+  if (g.mode3d && !(p.parryCd > 0) && Math.random() < 0.5) {
+    let close = nearest && nearestD < nearest.radius + p.radius + 12;
+    for (const b of g.enemyBullets) if (!close && Math.hypot(b.x - p.x, b.y - p.y) < 45) close = true;
+    if (close) { if (p === g.player) g.input.parry = true; else g.tryParry(p); }
   }
   return [fx, fy];
 }
@@ -81,6 +102,7 @@ function runSim(runs, diff) {
     const pick = makeRng(1000 + r);
     const g = new Game(r + 1);
     g.newRun(c, diff);
+    g.mode3d = !!process.env.SIM3D;
     let guard = 0;
     while (g.state !== 'GAME_OVER' && g.state !== 'VICTORY' && guard++ < 2e6) {
       if (g.state === 'PLAYING') { const j = bot(g, g.player); g.update(1 / 60, j[0], j[1]); }
@@ -89,7 +111,7 @@ function runSim(runs, diff) {
     if (g.state === 'VICTORY') wins++;
     total += g.wave;
   }
-  console.log(DIFF_NAMES[diff].padEnd(9) + ' vitorias: ' + wins + '/' + runs + '  onda media: ' + (total / runs).toFixed(1) + '  (' + stats.saves + ' saves testados)');
+  console.log((process.env.SIM3D ? '3D ' : '') + DIFF_NAMES[diff].padEnd(9) + ' vitorias: ' + wins + '/' + runs + '  onda media: ' + (total / runs).toFixed(1) + '  (' + stats.saves + ' saves testados)');
 }
 
 /**
