@@ -816,6 +816,40 @@ const Art = {
 
 
 /** Coisas das classes novas que ficam no chão ou em volta do jogador (desenhadas antes dos insetos). */
+/** Ascensão Divina: piso de mármore e ouro flutuando nas nuvens. */
+Art.buildDivineArena = function () {
+  const c = document.createElement('canvas');
+  c.width = WORLD_W; c.height = WORLD_H;
+  const g = c.getContext('2d');
+  const tile = 100;
+  for (let ty = 0; ty < WORLD_H; ty += tile) {
+    for (let tx = 0; tx < WORLD_W; tx += tile) {
+      g.fillStyle = ((tx + ty) / tile) % 2 === 0 ? '#FAF6EC' : '#ECD6A0';
+      g.fillRect(tx, ty, tile, tile);
+      g.strokeStyle = 'rgba(200,160,60,0.35)'; g.lineWidth = 2; g.strokeRect(tx + 1, ty + 1, tile - 2, tile - 2);
+    }
+  }
+  const r = makeRng(777);
+  for (let i = 0; i < 40; i++) { // veios do mármore
+    g.strokeStyle = `rgba(180,170,200,${0.15 + r.float() * 0.2})`; g.lineWidth = 1 + r.float() * 2;
+    let x = r.float() * WORLD_W, y = r.float() * WORLD_H;
+    g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < 5; k++) { x += (r.float() - 0.5) * 120; y += (r.float() - 0.5) * 120; g.lineTo(x, y); }
+    g.stroke();
+  }
+  for (let i = 0; i < 30; i++) { // nuvenzinhas no chão
+    const x = r.float() * WORLD_W, y = r.float() * WORLD_H, s = 20 + r.float() * 30;
+    g.fillStyle = 'rgba(255,255,255,0.55)';
+    for (let k = 0; k < 4; k++) { g.beginPath(); g.arc(x + k * s * 0.6, y + Math.sin(k) * s * 0.2, s * (0.6 + 0.3 * (k % 2)), 0, Math.PI * 2); g.fill(); }
+  }
+  g.fillStyle = 'rgba(255,215,80,0.8)'; // estrelinhas de ouro
+  for (let i = 0; i < 70; i++) {
+    const x = r.float() * WORLD_W, y = r.float() * WORLD_H, s = 2 + r.float() * 4;
+    g.beginPath(); g.moveTo(x, y - s * 2); g.lineTo(x + s * 0.6, y); g.lineTo(x, y + s * 2); g.lineTo(x - s * 0.6, y); g.closePath(); g.fill();
+  }
+  return c;
+};
+
 Art.drawAbilityGround = function () {
   const ctx = this.ctx, g = this.game, t = this.time;
   for (const p of g.players) {

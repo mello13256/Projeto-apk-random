@@ -116,7 +116,7 @@ class Multiplayer {
       }
       if (!code) throw new Error('sem código');
       this.code = code;
-      this.roster = [{ id: this.pid, name, char, ready: true, conn: 1, host: true }];
+      this.roster = [{ id: this.pid, name, char, ready: true, conn: 1, host: true, emp: this.ui.meEmp() }];
       await Fb.put(this.path(), {
         h: {
           meta: { host: this.pid, diff, st: 'lobby', ts: SERVER_TIME, hb: Date.now(), v: MP_VERSION, mode: this.mode, m3: !!this.m3 },
@@ -149,7 +149,7 @@ class Multiplayer {
       const roster = (await Fb.get('rooms/' + code + '/h/roster')) || {};
       if (Object.keys(roster).length >= MP_MAX) throw new Error('A sala ' + code + ' está cheia (máximo ' + MP_MAX + ').');
       this.diff = h.diff | 0;
-      await Fb.put(this.path('g/' + this.pid), { n: name, c: char, r: false, hb: Date.now() });
+      await Fb.put(this.path('g/' + this.pid), Object.assign({ n: name, c: char, r: false, hb: Date.now() }, this.ui.meEmp() ? { e: true } : {}));
     } catch (e) {
       this.busy = '';
       this.role = null;
@@ -211,6 +211,7 @@ class Multiplayer {
     const o = {};
     this.roster.forEach((r, i) => {
       o[r.id] = { n: r.name, c: r.char, r: !!r.ready, o: i, k: r.conn ? 1 : 0 };
+      if (r.emp) o[r.id].e = true; // Imperador
       if (r.pv) o[r.id].p = r.pv; // PvP: rodada e situação de cada um ("12|1")
     });
     return o;
@@ -305,6 +306,7 @@ class Multiplayer {
       const name = typeof d.n === 'string' && Ranking.validName(d.n) ? d.n : 'Jogador';
       const char = CHARS[d.c] ? d.c | 0 : 0;
       if (name !== r.name || char !== r.char) { r.name = name; r.char = char; changed = true; }
+      if (!!d.e !== !!r.emp) { r.emp = !!d.e; changed = true; }
       if (!this.inGame && !!d.r !== r.ready) { r.ready = !!d.r; changed = true; }
       if (d.hb !== r.hb) { r.hb = d.hb; r.seenAt = now(); }
       if (typeof d.pv === 'string' && d.pv !== r.pv) { r.pv = d.pv.slice(0, 20); changed = true; }
@@ -433,7 +435,7 @@ class Multiplayer {
     const ro = data.roster || {};
     this.roster = Object.keys(ro).map((id) => {
       const x = ro[id] || {};
-      return { id, name: String(x.n || '?').slice(0, 16), char: CHARS[x.c] ? x.c | 0 : 0, ready: !!x.r, conn: x.k ? 1 : 0, o: x.o | 0, host: id === meta.host, pv: typeof x.p === 'string' ? x.p : '' };
+      return { id, name: String(x.n || '?').slice(0, 16), char: CHARS[x.c] ? x.c | 0 : 0, ready: !!x.r, conn: x.k ? 1 : 0, o: x.o | 0, host: id === meta.host, pv: typeof x.p === 'string' ? x.p : '', emp: !!x.e };
     }).sort((a, b) => a.o - b.o);
     // conexão direta: o anfitrião mandou uma oferta para mim
     const offer = data.o && data.o[this.pid];
@@ -481,7 +483,7 @@ class Multiplayer {
 
   startGame() {
     if (!this.canStart()) return false;
-    const s = { gid: Date.now(), diff: this.diff, mode: this.mode, m3: !!this.m3, list: this.roster.map((r) => ({ id: r.id, name: r.name, char: r.char })) };
+    const s = { gid: Date.now(), diff: this.diff, mode: this.mode, m3: !!this.m3, list: this.roster.map((r) => Object.assign({ id: r.id, name: r.name, char: r.char }, r.emp ? { emp: 1 } : {})) };
     const str = JSON.stringify(s);
     Fb.put(this.path('h/start'), str).then(() => Fb.patch(this.path('h/meta'), { st: 'game' })).catch(() => {});
     this.beginGame(s);

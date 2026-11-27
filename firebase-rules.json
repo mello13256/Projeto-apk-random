@@ -140,7 +140,7 @@
     "runs": {
       "$id": {
         "$slot": {
-          ".write": "$id.matches(/^[ad][a-z0-9]{15,24}$/) && ($slot.matches(/^d[0-6](_3d)?$/) || $slot === 'daily' || $slot === 'daily3d') && newData.exists()",
+          ".write": "$id.matches(/^[ad][a-z0-9]{15,24}$/) && ($slot.matches(/^d[0-6](_3d)?$/) || $slot === 'daily' || $slot === 'daily3d' || ($slot === 'd7' && !data.exists())) && newData.exists()",
           ".validate": "newData.hasChildren(['t'])",
           "t": {
             ".validate": "newData.isNumber() && newData.val() === now"
@@ -148,6 +148,22 @@
           "$other": {
             ".validate": false
           }
+        }
+      }
+    },
+    "emperors": {
+      ".read": true,
+      "$id": {
+        ".write": "!data.exists() && newData.exists() && $id.matches(/^[ad][a-z0-9]{15,24}$/) && root.child('runs').child($id).child('d7').child('t').isNumber() && now - root.child('runs').child($id).child('d7').child('t').val() >= 19 * 12000",
+        ".validate": "newData.hasChildren(['n', 't'])",
+        "n": {
+          ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 16 && newData.val().matches(/^[^<>&{}]+$/)"
+        },
+        "t": {
+          ".validate": "newData.isNumber() && newData.val() === now"
+        },
+        "$other": {
+          ".validate": false
         }
       }
     },
@@ -222,6 +238,9 @@
               },
               "p": {
                 ".validate": "newData.isString() && newData.val().length <= 20"
+              },
+              "e": {
+                ".validate": "newData.isBoolean()"
               }
             }
           },
@@ -277,6 +296,9 @@
             },
             "pv": {
               ".validate": "newData.isString() && newData.val().length <= 20"
+            },
+            "e": {
+              ".validate": "newData.isBoolean()"
             }
           }
         },

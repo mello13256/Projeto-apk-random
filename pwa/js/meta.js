@@ -180,7 +180,7 @@ const MetaUi = {
       const right = x + w - (e.b ? 34 : 6);
       this.text(e.won ? '🏆' : 'Onda ' + e.wave, right - 70, ry + rowH / 2 + 6, 17, e.won ? C.GOLD : '#E8F5D0', 'right');
       this.text(shortNum(e.kills) + ' 🐛', right, ry + rowH / 2 + 6, 16, '#CFE3B8', 'right');
-      this.textFit(String(e.name || '?').slice(0, 16), x + 74 + (right - 150 - x - 74) / 2, ry + rowH / 2 + 7, 19, right - 150 - x - 74, mine ? C.GOLD : '#FFFFFF');
+      this.nameTag(String(e.name || '?').slice(0, 16), x + 74, ry + rowH / 2 + 7, 19, right - 150, mine ? C.GOLD : '#FFFFFF', this.isEmp(e.id));
       if (e.b) this.emoji('🔍', x + w - 14, ry + rowH / 2 - 2, 20);
       this.register(x, ry, w, rowH - 4, 'RANK_VIEW', (src === 'daily' ? 100 : 0) + i, true);
     });
@@ -197,7 +197,7 @@ const MetaUi = {
     this.panel(x, y, w, h);
     const ch = CHARS[e.character];
     if (ch) this.drawHero(ch, x + 70, y + 74, 84, { lookX: 0.5, lookY: 0.2 });
-    this.textFit(String(e.name || '?'), x + 130 + (w - 160) / 2, y + 54, 32, w - 160, C.GOLD);
+    this.textFit(this.isEmp(e.id) ? String(e.name || '?') + '  👑 Imperador' : String(e.name || '?'), x + 130 + (w - 160) / 2, y + 54, 32, w - 160, C.GOLD);
     this.textFit((ch ? ch.name + '  •  ' : '') + (e.won ? '🏆 Venceu' : 'Onda ' + e.wave) + '  •  ' + e.kills + ' insetos' + (e.level ? '  •  nível ' + e.level : ''),
       x + 130 + (w - 160) / 2, y + 90, 20, w - 160, '#E8F5D0');
     if (!b) {

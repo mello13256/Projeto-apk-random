@@ -65,8 +65,8 @@ class Prefs {
 
 const RANDOM_CHAR = -1;
 const CHAR_COLS = 11;                        // tela de personagens: 11 colunas x 3 linhas
-const RANK_DAILY = DIFF_NAMES.length;        // aba "Hoje" do ranking (Desafio do Dia)
-const RANK_TABS = DIFF_NAMES.length + 1;
+const RANK_DAILY = RANKED_DIFFS;            // aba "Hoje" do ranking (Desafio do Dia)
+const RANK_TABS = RANKED_DIFFS + 1;
 function achValue(a, rec) { return Math.min(a.goal, Math.max(0, a.value(rec) || 0)); }
 function achDone(a, rec) { return achValue(a, rec) >= a.goal; }
 const WEBSITE_URL = 'https://mello13256.github.io/Projeto-apk-random/';
@@ -75,7 +75,7 @@ function openExternal(url) {
   if (typeof window !== 'undefined' && window.HortaAndroid && window.HortaAndroid.openUrl) window.HortaAndroid.openUrl(url);
   else window.open(url, '_blank');
 }
-const DIFF_COLORS = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A', '#FF3D00', '#C77DFF'];
+const DIFF_COLORS = ['#8CF08C', '#FFFFFF', '#FFA040', '#FF5A5A', '#FF3D00', '#C77DFF', '#7AE8FF', '#FFD700'];
 const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 const IS_APP = typeof window !== 'undefined' && !!window.HortaAndroid; // rodando dentro do APK
 const IS_STANDALONE = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches;
@@ -139,6 +139,7 @@ class Ui {
     this.tipItem = null; this.tipTime = 0;
     this.selectedChar = prefs.data.lastChar;
     this.difficulty = prefs.data.lastDiff;
+    if (!(this.difficulty >= 0 && this.difficulty < RANKED_DIFFS)) this.difficulty = 1;
     this.newUnlocks = '';
     this.lastState = null;
     // Ranking online
@@ -248,6 +249,7 @@ class Ui {
           return null;
         }
         this.rankPost = { status: 'new', first: !r.best, daily: !!daily, m3: g.mode3d };
+        if (!daily && !g.mode3d) this.checkTopAll(); // pode ter virado o 1º de todos
         return Ranking.topAt(base).then((list) => {
           const pos = list.findIndex((e) => e.id === id);
           if (pos >= 0) this.rankPost.pos = pos + 1;
@@ -273,7 +275,8 @@ class Ui {
     const g = this.game;
     if (g.coop || g.pvp) return;
     const t = this.ticket = { ok: false };
-    Ranking.ticket(this.account.rankId(), g.daily ? (g.mode3d ? 'daily3d' : 'daily') : Ranking.board(g.difficulty, g.mode3d)).then(() => { t.ok = true; }, () => {});
+    const slot = g.daily ? (g.mode3d ? 'daily3d' : 'daily') : g.difficulty === DIFF_DIVINE ? 'd7' : Ranking.board(g.difficulty, g.mode3d);
+    Ranking.ticket(this.account.rankId(), slot).then(() => { t.ok = true; }, () => {});
   }
 
   /** Texto do ranking no fim da partida. */
@@ -297,6 +300,8 @@ class Ui {
     const g = this.game;
     const before = this.unlockedChars();
     const achBefore = ACHIEVEMENTS.map((a) => achDone(a, this.prefs.data));
+    const divine = g.difficulty === DIFF_DIVINE && !g.coop && !g.daily;
+    if (divine) this.endDivine(won);
     this.prefs.recordRun(g.runInfo(won));
     this.newAch = ACHIEVEMENTS.filter((a, i) => !achBefore[i] && achDone(a, this.prefs.data));
     for (const a of this.newAch) this.prefs.data.achDone[a.id] = true;
@@ -305,7 +310,7 @@ class Ui {
     const after = this.unlockedChars();
     this.newUnlocks = CHARS.filter((c, i) => !before[i] && after[i]).map((c) => c.name).join(', ');
     this.rankPost = null;
-    if (!g.coop) this.autoPost();
+    if (!g.coop && !divine) this.autoPost();
   }
 
   saveIfPossible() { if (this.game.state === 'SHOP') this.prefs.saveRun(this.game.saveToString()); }
@@ -437,6 +442,7 @@ class Ui {
     const pickSlot = (i) => { this.selectedChar = i === CHARS.length ? RANDOM_CHAR : i; };
     switch (g.state) {
       case 'MENU':
+        if (this.menuModal()) { if (ok && this.menuModal() === 'wish') this.doAction('WISH_OK'); break; } // janela aberta
         if (ok) this.doAction(this.prefs.data.savedRun ? 'CONTINUE' : 'PLAY');
         else if (code === 'KeyN') this.doAction('PLAY');
         else if (code === 'KeyH') this.doAction('HELP');
@@ -541,6 +547,7 @@ class Ui {
 
   doAction(action, arg) {
     const g = this.game, p = g.player;
+    if (this.gloryAction(action) || this.blockedByBan(action)) return; // 5.1: janelas do menu e castigo
     switch (action) {
       case 'PLAY':
         this.newUnlocks = '';
@@ -583,7 +590,7 @@ class Ui {
       }
       case 'LOBBY_READY': this.mp.setLobbyReady(!this.mp.myReady); break;
       case 'LOBBY_DIFF':
-        if (this.mp.isHost()) { this.difficulty = (this.mp.diff + arg + DIFF_NAMES.length) % DIFF_NAMES.length; this.mp.setDiff(this.difficulty); }
+        if (this.mp.isHost()) { this.difficulty = (this.mp.diff + arg + RANKED_DIFFS) % RANKED_DIFFS; this.mp.setDiff(this.difficulty); }
         break;
       case 'LOBBY_START': if (!this.mp.startGame()) this.showToast(this.mp.lobbyHint()); break;
       case 'LOBBY_MODE': this.mp.setMode(this.mp.mode === 'pvp' ? 'coop' : 'pvp'); break;
@@ -591,7 +598,7 @@ class Ui {
       case 'LOBBY_LEAVE': this.mp.leave(); g.state = 'MP_MENU'; break;
       case 'MP_BACK_LOBBY': this.newUnlocks = ''; this.mp.backToLobby(); break;
       case 'UNREADY': this.mp.setReady(false); break;
-      case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.rank.m3 = !!this.prefs.data.mode3d; this.loadRanking(this.difficulty); break;
+      case 'RANKING': g.state = 'RANKING'; this.rankView = null; this.rank.m3 = !!this.prefs.data.mode3d; this.loadRanking(Math.min(this.difficulty, RANKED_DIFFS - 1)); break;
       case 'RANK_M3': this.rank.m3 = !this.rank.m3; this.loadRanking(this.rank.diff); break;
       case 'RANK_DIFF': this.loadRanking((this.rank.diff + arg + RANK_TABS) % RANK_TABS); break;
       case 'RANK_VIEW':
@@ -631,7 +638,7 @@ class Ui {
         this.prefs.data.mode3d = !this.prefs.data.mode3d; this.prefs.save();
         this.showToast(this.prefs.data.mode3d ? '🧊 Modo 3D: mira manual (segure pra atacar) e parry!' : '🟩 Modo 2D: mira automática');
         break;
-      case 'DIFF': this.difficulty = (this.difficulty + arg + DIFF_NAMES.length) % DIFF_NAMES.length; break;
+      case 'DIFF': { const n = this.diffCount(); this.difficulty = (Math.min(this.difficulty, n - 1) + arg + n) % n; break; }
       case 'START': {
         const unlocked = this.unlockedChars();
         let idx = this.selectedChar;
@@ -642,8 +649,18 @@ class Ui {
           this.showToast('Personagem bloqueado: ' + unlockText(CHARS[idx]));
           break;
         }
+        if (this.difficulty === DIFF_DIVINE) {
+          if (!this.divineOpen()) { this.difficulty = 1; break; }
+          if (!(this.divineArm > this.time)) { // uma chance só: pede pra confirmar
+            this.divineArm = this.time + 4;
+            this.showToast('☀️ Uma chance só! Toque em COMEÇAR de novo para confirmar.', 4);
+            break;
+          }
+          this.divineArm = 0;
+          this.beginDivine();
+        }
         this.prefs.data.lastChar = this.selectedChar === RANDOM_CHAR ? 0 : this.selectedChar;
-        this.prefs.data.lastDiff = this.difficulty;
+        this.prefs.data.lastDiff = this.difficulty === DIFF_DIVINE ? DIFF_ASCENT : this.difficulty;
         this.prefs.clearRun();
         g.mode3d = !!this.prefs.data.mode3d;
         g.newRun(CHARS[idx], this.difficulty);
@@ -652,6 +669,7 @@ class Ui {
         break;
       }
       case 'AGAIN':
+        if (g.difficulty === DIFF_DIVINE) { g.state = 'MENU'; break; } // a Divina não tem segunda chance
         this.newUnlocks = '';
         this.prefs.clearRun();
         if (g.daily) { this.startDaily(); break; }
@@ -762,6 +780,7 @@ class Ui {
       default: this.drawEnd();
     }
     if (this.deferred) this.deferred();
+    if (g.state === 'MENU' && this.prefs.data.topAll) this.drawGlow(); // 1º em todos os rankings
     if (this.toastTime > 0 && this.toast) {
       const a = Math.min(1, this.toastTime * 3);
       let size = 26;
@@ -788,7 +807,9 @@ class Ui {
       this.drawHero(c, x, 44 + row * 56 + Math.sin(this.time * 3 + i) * 6, Math.min(48, step * 0.8), { facingLeft: k < n / 2, lookX: 0, lookY: 0.3 });
     });
     this.text('HORTA HOSTIL', cx, 186, 76, C.GOLD, 'center');
-    this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 222, 24, '#E8F5D0', 'center');
+    const sub = this.menuSubtitle();
+    if (sub) this.textFit(sub[0], cx, 222, 24, this.vw - 60, sub[1]);
+    else this.text('Os insetos invadiram a horta. Só os legumes podem salvá-la!', cx, 222, 24, '#E8F5D0', 'center');
     const big = d.savedRun
       ? [['CONTINUAR', 'CONTINUE', C.GREEN], ['NOVO JOGO', 'PLAY', C.ORANGE], ['📅 DESAFIO DO DIA', 'DAILY', '#C0571E'], ['👥 MULTIPLAYER', 'MP', C.BLUE]]
       : [['JOGAR', 'PLAY', C.GREEN], ['📅 DESAFIO DO DIA', 'DAILY', '#C0571E'], ['👥 MULTIPLAYER', 'MP', C.BLUE]];
@@ -832,8 +853,9 @@ class Ui {
     this.text(acc ? '☁️ Progresso salvo na conta ' + acc.name + (this.account.status ? ' (' + this.account.status + ')' : '')
       : 'Crie uma conta para salvar seu progresso e jogar em outro aparelho.', cx, 608, 18, acc ? '#9FE8FF' : 'rgba(255,255,255,0.55)', 'center');
     if (!this.touch) this.text('Enter: ' + (d.savedRun ? 'continuar  •  N: novo jogo' : 'jogar') + '  •  T: desafio do dia  •  O: multiplayer  •  R: ranking  •  C: conquistas  •  M: música  •  H: ajuda', cx, 652, 18, 'rgba(255,255,255,0.5)', 'center');
-    this.text('© 2026 mello13256 • todos os direitos reservados • v5.0', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
+    this.text('© 2026 mello13256 • todos os direitos reservados • v5.1', cx, 692, 20, 'rgba(255,255,255,0.6)', 'center');
     if (this.showHelp) this.drawHelp();
+    else this.drawMenuModal();
   }
 
   drawMenuBackground() {
@@ -931,6 +953,7 @@ class Ui {
       this.roundRect(x, y0, cw, ch, 18, mine ? '#33442A' : '#2A2116', SLOT_COLORS[i], mine ? 5 : 3);
       this.drawHero(CHARS[r.char], x + cw / 2, y0 + 54, 64, { lookX: 0, lookY: 0.3, facingLeft: i % 2 === 1 });
       this.textFit(r.name + (mine ? ' (você)' : ''), x + cw / 2, y0 + 112, 22, cw - 16, '#FFFFFF');
+      if (r.emp) this.text('👑 Imperador', x + cw - 10, y0 + 24, 16, C.GOLD, 'right');
       this.textFit(CHARS[r.char].name, x + cw / 2, y0 + 138, 17, cw - 16, '#FFE08A');
       const st = r.host ? '👑 Dono da sala' : r.ready ? '✔ Pronto' : '⏳ Escolhendo...';
       this.textFit(st, x + cw / 2, y0 + 166, 19, cw - 16, r.host ? C.GOLD : r.ready ? '#8CF08C' : '#FFC870');
@@ -1061,6 +1084,7 @@ class Ui {
         wx += w + 6;
       }
     }
+    if (this.difficulty === DIFF_DIVINE) this.drawDivineWarning(46, py + ph - 52, vw - 92);
     // 2D ou 3D
     const m3 = !!this.prefs.data.mode3d;
     this.button(vw - 30 - 196, py + 12, 180, 52, m3 ? '🧊 Modo 3D' : '🟩 Modo 2D', 'MODE3D', 0, m3 ? '#2E6FA8' : '#3E7A2E', true, 24);
@@ -1120,8 +1144,8 @@ class Ui {
         else this.text((i + 1) + 'º', x + 20, y + 28, 20, '#CFE3B8', 'center');
         const ch = CHARS[e.character];
         if (ch) this.emoji(ch.icon, x + 58, y + 19, 30);
-        this.text(String(e.name || '?').slice(0, 16), x + 82, y + 28, 21, mine ? C.GOLD : '#FFFFFF', 'left');
         const res = e.won ? '🏆 Venceu' : 'Onda ' + e.wave;
+        this.nameTag(String(e.name || '?').slice(0, 16), x + 82, y + 28, 21, x + colW - 158 - this.measure(res, 19), mine ? C.GOLD : '#FFFFFF', this.isEmp(e.id));
         this.text(res, x + colW - 150, y + 28, 19, e.won ? C.GOLD : '#E8F5D0', 'right');
         this.text(shortNum(e.kills) + ' 🐛', x + colW - 58, y + 28, 18, '#CFE3B8', 'right');
         this.emoji(e.b ? '🔍' : e.platform === 'android' ? '📱' : '💻', x + colW - 30, y + 18, 22);
@@ -1129,8 +1153,8 @@ class Ui {
     }
     this.button(30, VH - 96, 200, 74, 'Voltar', 'MENU', 0, C.GRAY, true, 30);
     this.button(vw - 230, VH - 96, 200, 74, 'Atualizar', 'RANK_REFRESH', 0, C.GRAY, !r.loading, 28);
-    this.button(cx - 110, VH - 96, 220, 74, r.m3 ? '🧊 Ranking 3D' : '🟩 Ranking 2D', 'RANK_M3', 0, r.m3 ? '#2E6FA8' : '#3E7A2E', true, 26);
-    if (!this.touch) this.keyBadge('V', cx + 110 - 30, VH - 94);
+    this.button(30, 22, 200, 54, r.m3 ? '🧊 Ranking 3D' : '🟩 Ranking 2D', 'RANK_M3', 0, r.m3 ? '#2E6FA8' : '#3E7A2E', true, 22);
+    if (!this.touch) this.keyBadge('V', 30 + 200 - 28, 24);
     this.text(r.diff === RANK_DAILY ? 'Desafio de hoje: ' + dailyChallenge().date.split('-').reverse().join('/') + '  •  toque num jogador pra ver a build 🔍' : 'Ordem: vitória, onda e insetos  •  toque num jogador pra ver a build 🔍', cx, VH - 54, 18, 'rgba(255,255,255,0.6)', 'center');
     if (!this.touch) this.text('Setas: dificuldade  •  R: atualizar  •  Esc: voltar', cx, VH - 26, 16, 'rgba(255,255,255,0.45)', 'center');
     if (this.rankView) this.drawRankView();
@@ -1208,11 +1232,13 @@ class Ui {
 
   /** O mapa muda no Inferno. */
   isInferno() { const g = this.game; return g.difficulty === DIFF_INFERNO && !g.pvp; }
+  /** Ascensão Divina: mapa nas nuvens. */
+  isDivine() { const g = this.game; return g.difficulty === DIFF_DIVINE && !g.pvp; }
 
   arenaFor() {
     this.arenas = this.arenas || {};
-    const key = this.isInferno() ? 'inferno' : 'normal';
-    if (!this.arenas[key]) this.arenas[key] = key === 'inferno' ? this.buildInfernoArena() : this.buildArena();
+    const key = this.isInferno() ? 'inferno' : this.isDivine() ? 'divine' : 'normal';
+    if (!this.arenas[key]) this.arenas[key] = key === 'inferno' ? this.buildInfernoArena() : key === 'divine' ? this.buildDivineArena() : this.buildArena();
     return this.arenas[key];
   }
 
@@ -1232,14 +1258,14 @@ class Ui {
 
   drawWorld() {
     const ctx = this.ctx, g = this.game, me = g.player, vw = this.vw;
-    const inferno = this.isInferno();
+    const inferno = this.isInferno(), divine = this.isDivine();
     this.updateCamera();
     let camX = this.cam.x, camY = this.cam.y;
     if (g.shake > 0 && !g.paused) {
       camX += (Math.random() - 0.5) * g.shake;
       camY += (Math.random() - 0.5) * g.shake;
     }
-    ctx.fillStyle = inferno ? '#140605' : '#22301A';
+    ctx.fillStyle = inferno ? '#140605' : divine ? '#9CC8EE' : '#22301A';
     ctx.fillRect(0, 0, vw, VH);
     ctx.save();
     ctx.translate(-camX, -camY);
@@ -1251,6 +1277,11 @@ class Ui {
       ctx.strokeRect(-9, -9, WORLD_W + 18, WORLD_H + 18);
       ctx.lineWidth = 4; ctx.strokeStyle = `rgba(255,${100 + Math.round(60 * Math.sin(this.time * 3))},0,0.9)`;
       ctx.strokeRect(-1, -1, WORLD_W + 2, WORLD_H + 2);
+    } else if (divine) { // Ascensão Divina: grade de ouro
+      ctx.lineWidth = 16; ctx.strokeStyle = '#E8C766';
+      ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
+      ctx.lineWidth = 4; ctx.strokeStyle = `rgba(255,255,255,${0.6 + 0.3 * Math.sin(this.time * 3)})`;
+      ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
     } else {
       ctx.lineWidth = 16; ctx.strokeStyle = '#6B4A26';
       ctx.strokeRect(-8, -8, WORLD_W + 16, WORLD_H + 16);
@@ -1336,7 +1367,7 @@ class Ui {
     if (g.coop) {
       for (const p of g.players) {
         if (p === me) continue;
-        this.text(p.name, p.x, p.y - 46, 18, SLOT_COLORS[p.slot % SLOT_COLORS.length], 'center');
+        this.text(this.titled(p.name, p.emp), p.x, p.y - 46, 18, SLOT_COLORS[p.slot % SLOT_COLORS.length], 'center');
         if (p.alive && p.hp < p.maxHp()) {
           ctx.fillStyle = 'rgba(0,0,0,0.67)'; ctx.fillRect(p.x - 25, p.y - 40, 50, 6);
           ctx.fillStyle = '#E0413A'; ctx.fillRect(p.x - 24, p.y - 39, 48 * clamp(p.hp / p.maxHp(), 0, 1), 4);
@@ -1350,7 +1381,11 @@ class Ui {
       this.drawBullet(b);
     }
     for (const b of g.enemyBullets) {
-      if (inferno) {
+      if (divine) { // raios de luz
+        this.circle(b.x, b.y, b.radius + 4, 'rgba(255,200,40,0.35)');
+        this.circle(b.x, b.y, b.radius, '#FFB300');
+        this.circle(b.x, b.y, b.radius * 0.45, '#FFFFFF');
+      } else if (inferno) {
         this.circle(b.x, b.y, b.radius + 4, 'rgba(255,80,0,0.35)');
         this.circle(b.x, b.y, b.radius, '#FF6D00');
         this.circle(b.x, b.y, b.radius * 0.45, '#FFF59D');
@@ -1675,7 +1710,7 @@ class Ui {
       if (r.id === this.mp.pid) continue;
       const [w, st] = (r.pv || '1|0').split('|');
       this.emoji(CHARS[r.char].icon, x + 16, y + 14, 28);
-      this.text(r.name, x + 38, y + 12, 17, '#FFD0C0', 'left');
+      this.text(this.titled(r.name, r.emp), x + 38, y + 12, 17, '#FFD0C0', 'left');
       const label = st === '2' ? '⚔️ pronto' : st === '3' ? 'caiu na rodada ' + w : st === '1' ? 'loja da rodada ' + w : 'rodada ' + w + '/' + PVP_PREP_WAVES;
       this.text(label, x + 38, y + 32, 15, st === '2' ? '#8CF08C' : '#E0E0E0', 'left');
       y += 44;
@@ -1713,7 +1748,7 @@ class Ui {
     info.rows.forEach((r, i) => {
       const ry = y + 126 + i * 46;
       this.emoji(CHARS[r.char] ? CHARS[r.char].icon : '❓', x + 40, ry - 8, 34);
-      this.text(r.name, x + 66, ry, 22, SLOT_COLORS[r.slot % SLOT_COLORS.length], 'left');
+      this.text(this.titled(r.name, r.emp), x + 66, ry, 22, SLOT_COLORS[r.slot % SLOT_COLORS.length], 'left');
       const t = Stat.NAMES[a] + ' ' + fmt(a, r.before[0]) + ' → ' + fmt(a, r.after[0]) + '   •   ' + Stat.NAMES[b] + ' ' + fmt(b, r.before[1]) + ' → ' + fmt(b, r.after[1]);
       this.textFit(t, x + w / 2 + 90, ry, 19, w - 260, '#E8F5D0');
     });
@@ -1762,7 +1797,7 @@ class Ui {
       this.ctx.globalAlpha = p.alive ? 1 : 0.5;
       this.emoji(p.alive ? p.character.icon : '👻', x + 16, y + 14, 30);
       this.ctx.globalAlpha = 1;
-      this.text(p.name, x + 38, y + 12, 17, color, 'left');
+      this.text(this.titled(p.name, p.emp), x + 38, y + 12, 17, color, 'left');
       if (this.mp.isHost()) {
         const r = this.mp.roster.find((q) => q.id === p.id);
         if (r && r.ping) this.text(r.ping + ' ms' + (r.conn ? ' ⚡' : ' 🌐'), x + 154, y + 12, 14, r.ping < 120 ? '#8CF08C' : r.ping < 250 ? '#FFE678' : '#FF8A7A', 'right');
@@ -2066,10 +2101,12 @@ class Ui {
     this.drawMenuBackground();
     if (won) {
       this.text('A HORTA ESTÁ SALVA!', cx, 100, 68, C.GOLD, 'center');
-      this.text((g.coop ? 'O time sobreviveu' : 'Você sobreviveu') + ' às ' + g.wave + ' ondas no ' + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
+      if (g.difficulty === DIFF_DIVINE) this.textFit('👑 VOCÊ AGORA É IMPERADOR! O título vai aparecer no seu nome pra sempre.', cx, 145, 28, this.vw - 60, C.GOLD);
+      else this.text((g.coop ? 'O time sobreviveu' : 'Você sobreviveu') + ' às ' + g.wave + ' ondas ' + (g.difficulty >= DIFF_ASCENT ? 'na ' : 'no ') + DIFF_NAMES[g.difficulty] + '. Parabéns!', cx, 145, 26, '#E8F5D0', 'center');
     } else {
       this.text('VIROU SALADA!', cx, 100, 72, '#FF6A5A', 'center');
-      this.text(g.coop ? 'O time inteiro caiu... os insetos venceram desta vez.' : 'Os insetos venceram desta vez...', cx, 145, 26, '#E8F5D0', 'center');
+      if (g.difficulty === DIFF_DIVINE && !g.coop) this.textFit('🔒 Você perdeu a sua única chance. Sem jogar por ' + BAN_DAYS + ' dias.', cx, 145, 28, this.vw - 60, '#FF6A5A');
+      else this.text(g.coop ? 'O time inteiro caiu... os insetos venceram desta vez.' : 'Os insetos venceram desta vez...', cx, 145, 26, '#E8F5D0', 'center');
     }
     if (p) {
       const lx = cx - 250;
@@ -2112,6 +2149,10 @@ class Ui {
       return;
     }
     const bw = Math.min(330, (this.vw - 100) / 3), gap = 20, bx = cx - (bw * 3 + gap * 2) / 2;
+    if (g.difficulty === DIFF_DIVINE) { // fim da Ascensão Divina: sem "jogar de novo"
+      this.button(cx - 150, VH - 120, 300, 84, 'Menu', 'MENU', 0, C.GRAY, true, 32);
+      return;
+    }
     this.button(bx, VH - 120, bw, 84, 'Jogar de novo', 'AGAIN', 0, C.GREEN, true, 32);
     const [rt, rc] = this.rankPostText();
     if (rt) {

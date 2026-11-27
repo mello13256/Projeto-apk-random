@@ -33,10 +33,12 @@ Object.assign(Player.prototype, {
 
 Object.assign(Game.prototype, {
   // --- Dificuldade (Ascensão cresce a cada onda) ---
-  diffHp() { return this.difficulty === DIFF_ASCENT && this.pvp !== 'prep' ? ascent(this.wave).hp : DIFF_HP[this.difficulty]; },
-  diffDmg() { return this.difficulty === DIFF_ASCENT && this.pvp !== 'prep' ? ascent(this.wave).dmg : DIFF_DMG[this.difficulty]; },
-  diffSpawn() { return this.difficulty === DIFF_ASCENT && this.pvp !== 'prep' ? ascent(this.wave).spawn : DIFF_SPAWN[this.difficulty]; },
-  diffElites() { return this.difficulty === DIFF_ASCENT && this.pvp !== 'prep' ? ascent(this.wave).elites : 0; },
+  isAscent() { return (this.difficulty === DIFF_ASCENT || this.difficulty === DIFF_DIVINE) && this.pvp !== 'prep'; },
+  divine() { return this.difficulty === DIFF_DIVINE && this.pvp !== 'prep'; },
+  diffHp() { return this.isAscent() ? ascent(this.wave).hp * (this.divine() ? DIVINE.hp : 1) : DIFF_HP[this.difficulty]; },
+  diffDmg() { return this.isAscent() ? ascent(this.wave).dmg * (this.divine() ? DIVINE.dmg : 1) : DIFF_DMG[this.difficulty]; },
+  diffSpawn() { return this.isAscent() ? ascent(this.wave).spawn * (this.divine() ? DIVINE.spawn : 1) : DIFF_SPAWN[this.difficulty]; },
+  diffElites() { return this.isAscent() ? ascent(this.wave).elites + (this.divine() ? DIVINE.elites : 0) : 0; },
 
   /** Quantos desse inseto estão vivos ou nascendo (para o limite do Fungo e da General). */
   aliveOf(d) {

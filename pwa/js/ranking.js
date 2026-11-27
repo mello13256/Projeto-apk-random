@@ -95,6 +95,20 @@ const Ranking = {
     if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
   },
 
+  /** Ids dos Imperadores (quem venceu a Ascensão Divina). */
+  async emperors() {
+    const res = await fetch(RANKING_URL.replace(/\/ranking$/, '/emperors') + '.json?shallow=true', { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return Object.keys((await res.json()) || {});
+  },
+
+  /** Grava o novo Imperador (as regras conferem o bilhete da Ascensão Divina). */
+  async crown(playerId, name) {
+    const url = RANKING_URL.replace(/\/ranking$/, '/emperors/') + playerId + '.json';
+    const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ n: name, t: { '.sv': 'timestamp' } }) });
+    if (!res.ok) { const e = new Error('HTTP ' + res.status); e.status = res.status; throw e; }
+  },
+
   async postBestAt(base, playerId, entry) {
     const url = `${base}/${playerId}.json`;
     const score = this.scoreOf(entry.won, entry.wave, entry.kills);

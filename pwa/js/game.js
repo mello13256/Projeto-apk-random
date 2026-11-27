@@ -72,6 +72,7 @@ class Weapon {
   cooldown(p) {
     let speed = Math.max(0.2, 1 + p.stats[Stat.ATK_SPEED] / 100) * p.rmod('atk');
     if (p.kind === 'berserk') speed *= 1 + Math.max(0, 1 - p.hp / p.maxHp()) * 0.6; // Laranja: fúria também acelera
+    if (p.kind === 'boomerang') speed *= 0.8; // Banana: 20% menos velocidade de ataque (5.1, estava forte demais)
     if (p.popT > 0) speed *= 3; // Milho: Pipocar
     return Math.max(0.08, this.def.cooldown * TIER_CD[this.tier] / speed);
   }
@@ -390,6 +391,7 @@ class Game {
     this.coop = true;
     this.players = list.map((d, i) => {
       const p = new Player(CHARS[d.char] || CHARS[0], d.id, d.name, i);
+      p.emp = !!d.emp; // título de Imperador (5.1)
       p.materials = START_MATERIALS + (p.kind === 'interest' ? 20 : 0);
       p.remote = d.id !== localId;
       return p;
@@ -1431,7 +1433,7 @@ class Game {
     if (d.ai === AI_COMMANDER) e.aiTimer = 4;
     this.noteTip(d);
     // Poucos elites por onda: 1 a partir da onda 5, 2 a partir da 10, 3 a partir da 15.
-    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 && this.difficulty !== DIFF_ASCENT ? 1 : 0) + (this.dmod('elites') ? 3 : 0) + this.diffElites();
+    const maxElites = this.wave < 5 ? 0 : 1 + Math.floor((this.wave - 5) / 5) + (this.difficulty >= 3 && this.difficulty < DIFF_ASCENT ? 1 : 0) + (this.dmod('elites') ? 3 : 0) + this.diffElites();
     const eliteChance = (0.012 + 0.004 * this.difficulty) * (this.dmod('elites') || 1);
     if (!d.boss && this.elitesThisWave < maxElites && d !== E.VESPA && this.rng.float() < eliteChance) {
       this.elitesThisWave++;
@@ -1664,6 +1666,7 @@ class Game {
   }
 
   fireEnemyBullet(x, y, angle, speed, damage) {
+    if (this.difficulty === DIFF_DIVINE && this.pvp !== 'prep') speed *= DIVINE.bullet; // Ascensão Divina: tiros mais rápidos
     const b = { x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, radius: 9, life: 4, damage, dead: false };
     this.enemyBullets.push(b);
     return b;
@@ -2115,7 +2118,7 @@ class Game {
   // --- Salvar e continuar (a partida é salva na loja) ---
 
   saveToString() {
-    if (this.state !== 'SHOP' || !this.player || this.coop || this.daily) return null;
+    if (this.state !== 'SHOP' || !this.player || this.coop || this.daily || this.difficulty === DIFF_DIVINE) return null; // a Divina não salva
     return JSON.stringify(Object.assign({
       v: 2, diff: this.difficulty, wave: this.wave, kills: this.kills, harvest: this.lastHarvest, rerolls: this.shopRerolls,
       seeds: this.seedsCollected, m3: this.mode3d ? 1 : 0,

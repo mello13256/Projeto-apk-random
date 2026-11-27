@@ -511,8 +511,8 @@ const SPAWNABLE = [E.LAGARTA, E.VESPA, E.ARANHA, E.JOANINHA, E.ESCORPIAO, E.MARI
   E.BARATA, E.MOSQUITO, E.GRILO, E.MOSCA, E.PERCEVEJO, E.CUPIM, E.TECELA, E.ESCUDEIRO, E.ATIRADORA, E.MINHOCA, E.FUNGO, E.GENERAL];
 
 // Dificuldades (as duas últimas são novas: Inferno tem 35 ondas e visual infernal; Infinito não acaba)
-const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo', 'Inferno', 'Infinito', 'Ascensão'];
-const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀', '😈', '♾️', '📈'];
+const DIFF_NAMES = ['Fácil', 'Normal', 'Difícil', 'Pesadelo', 'Inferno', 'Infinito', 'Ascensão', 'Ascensão Divina'];
+const DIFF_ICONS = ['🌱', '🌿', '🔥', '💀', '😈', '♾️', '📈', '☀️'];
 const DIFF_DESC = [
   'Inimigos mais fracos. Bom pra aprender.',
   'O jogo como ele deve ser.',
@@ -521,13 +521,19 @@ const DIFF_DESC = [
   'A dificuldade máxima: 35 ondas numa horta em chamas.',
   'Pesadelo sem fim: até onde você chega?',
   'Começa fácil e fica quase impossível: 20 ondas.',
+  'Se você perder aqui a sua conta será apagada.',
 ];
 // Versão 4.1: tudo 2x mais difícil (insetos com ~40% mais vida, ~40% mais dano e 10% mais insetos)
-const DIFF_HP = [0.84, 1.6, 1.95, 2.4, 2.8, 2.4, 1];
-const DIFF_DMG = [0.84, 1.6, 2.0, 2.5, 2.95, 2.5, 1];
-const DIFF_SPAWN = [1.04, 0.9, 0.81, 0.72, 0.65, 0.72, 1];
-const DIFF_WAVES = [20, 20, 20, 20, 35, 0, 20]; // 0 = infinito
+const DIFF_HP = [0.84, 1.6, 1.95, 2.4, 2.8, 2.4, 1, 1];
+const DIFF_DMG = [0.84, 1.6, 2.0, 2.5, 2.95, 2.5, 1, 1];
+const DIFF_SPAWN = [1.04, 0.9, 0.81, 0.72, 0.65, 0.72, 1, 1];
+const DIFF_WAVES = [20, 20, 20, 20, 35, 0, 20, 20]; // 0 = infinito
 const DIFF_INFERNO = 4, DIFF_ENDLESS = 5, DIFF_ASCENT = 6;
+/** Ascensão Divina (5.1): liberada só pra quem venceu a Ascensão e disse "Sim"; uma chance só, sem ranking. */
+const DIFF_DIVINE = 7;
+const RANKED_DIFFS = 7; // dificuldades com ranking (0 a 6)
+/** Quanto a Ascensão Divina é mais difícil que a Ascensão (vida, dano, insetos) e a velocidade dos tiros. */
+const DIVINE = { hp: 1.4, dmg: 1.35, spawn: 0.9, bullet: 1.5, elites: 2 };
 /**
  * Ascensão: a força dos insetos sobe a cada onda. Onda 1 ≈ metade do Fácil; onda 10 ≈ Difícil;
  * onda 20 ≈ o dobro do Inferno (vida) e bem mais insetos.
@@ -576,4 +582,5 @@ const ACHIEVEMENTS = [
   ach('parry1', '🛡️', 'Aparador', 'Faça 100 parries no modo 3D', 100, (r) => r.parries || 0),
   ach('parry2', '⚔️', 'Mestre do Parry', 'Faça 1.000 parries no modo 3D', 1000, (r) => r.parries || 0),
   ach('active1', '⭐', 'Habilidoso', 'Use 200 habilidades ativas', 200, (r) => r.actives || 0),
+  ach('emperor', '👑', 'Imperador', 'Vença a Ascensão Divina', 1, (r) => (r.emperor ? 1 : 0)),
 ];

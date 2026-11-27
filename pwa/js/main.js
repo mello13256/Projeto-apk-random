@@ -29,6 +29,7 @@
   ui.mp = mp;
   ui.canvasEl = canvas; // 3D: trava o mouse para girar a câmera
   ui.account = new Account(prefs);
+  ui.startGlory(); // 5.1: castigo pendente, Imperadores e "1º em todos os rankings"
   window.hortaHostil = { game, ui, mp, prefs }; // útil para depurar no console
 
   game.fx = {

@@ -23,6 +23,22 @@ O site também pode ser **instalado como aplicativo** (Chrome/Edge: ícone ⊕ n
 Android: menu ⋮ → *Instalar app*; iPhone: Compartilhar → *Adicionar à Tela de Início*) e funciona sem internet
 depois da primeira visita.
 
+## 👑 Versão 5.1: Imperador, Ascensão Divina e desejo
+
+- **Banana** mais equilibrada: 20% menos velocidade de ataque.
+- **1º lugar em TODOS os rankings 2D** (do Fácil até a Ascensão): a tela do menu ganha um **brilho dourado** toda vez
+  que o jogo abre e, **uma única vez**, aparece um **envelope de parabéns** com direito a um desejo (pelo WhatsApp).
+- Quem **vence a Ascensão** é perguntado no menu: *"Achas que o meu jogo é fácil?"*. Respondendo **Sim**, libera a
+  **☀️ Ascensão Divina**: insetos 40% mais fortes que na Ascensão, tiros 50% mais rápidos desde o começo e um mapa nas
+  nuvens (mármore e ouro). **Uma chance só** (não salva; fechar o jogo no meio conta como derrota):
+  - **venceu** → título **👑 Imperador** ao lado do nome em todos os rankings e no multiplayer, pra sempre;
+  - **perdeu** → **7 dias sem jogar**.
+  Nos dois casos o modo some. O servidor só aceita **um** começo de Ascensão Divina por jogador e só coroa quem
+  esperou pelo menos 20 ondas.
+
+> ⚠️ As regras do Firebase mudaram de novo (`emperors`, bilhete `d7` e o título na sala): cole o
+> [`firebase-rules.json`](firebase-rules.json) no console.
+
 ## 🧊 Versão 5.0: modo 3D, habilidades ativas, Ascensão e o dobro de itens
 
 - **Modo 3D** (botão **🟩 2D / 🧊 3D** na escolha do legume, na sala do multiplayer e no Desafio do Dia), com
@@ -207,6 +223,7 @@ No celular, o lado **esquerdo** da tela é o analógico de andar e o lado **dire
 | 😈 Inferno | **35** | a máxima: mapa infernal, chefões nas ondas 10, 20, 30 e o **Besouro Infernal** na 35 |
 | ♾️ Infinito | **sem fim** | o Pesadelo sem limite de ondas (chefões a cada 10) — até onde você chega? |
 | 📈 Ascensão | 20 | começa mais fácil que o Fácil e fica quase impossível no fim |
+| ☀️ Ascensão Divina | 20 | secreta: liberada pra quem vence a Ascensão. Uma chance só |
 
 | | Computador | Celular / tablet |
 |---|---|---|
@@ -285,6 +302,7 @@ pwa/                      o jogo (site e app usam os mesmos arquivos)
     ├── ui.js             telas, botões e controles
     ├── art.js            desenhos: partículas dos legumes, armas, projéteis, mapa do Inferno
     ├── r3d.js            modo 3D: câmeras, projeção em perspectiva, radar e controles
+    ├── glory.js          5.1: brilho do 1º lugar, envelope do desejo, Ascensão Divina, Imperador e castigo
     ├── sfx.js            sons e música gerados por código (sem arquivos de áudio)
     ├── net.js            Firebase (REST + tempo real) e conexão direta (WebRTC)
     ├── mp.js             multiplayer: salas, sincronização, cooperativo e PvP

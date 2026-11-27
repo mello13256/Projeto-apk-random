@@ -26,7 +26,6 @@ const R3D = {
     this.showToast(CAM_ICONS[this.camMode()] + ' Câmera: ' + CAM_NAMES[this.camMode()]);
     if (this.camMode() === CAM_TOP && document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
   },
-  showToast(s) { this.toast = s; this.toastTime = 2; },
 
   /** Monta a câmera do quadro (fica em this.c3). */
   setupCam3d() {
@@ -205,13 +204,14 @@ const R3D = {
 
   drawWorld3d() {
     const ctx = this.ctx, g = this.game, me = g.player, vw = this.vw;
-    const inferno = this.isInferno();
+    const inferno = this.isInferno(), divine = this.isDivine();
     const c = this.setupCam3d();
     // céu e horizonte
     const hy = c.oy - c.focal * Math.tan(c.pitch);
     if (hy > 0) {
       const sky = ctx.createLinearGradient(0, Math.min(0, hy - 400), 0, hy);
       if (inferno) { sky.addColorStop(0, '#12020A'); sky.addColorStop(1, '#6A1A08'); }
+      else if (divine) { sky.addColorStop(0, '#6A4FC9'); sky.addColorStop(0.6, '#F7A8C8'); sky.addColorStop(1, '#FFE7A8'); }
       else { sky.addColorStop(0, '#4B9EDB'); sky.addColorStop(1, '#CDEBF5'); }
       ctx.fillStyle = sky; ctx.fillRect(0, 0, vw, hy + 2);
       if (!inferno) { // sol e nuvens que acompanham o giro
@@ -223,13 +223,13 @@ const R3D = {
         }
       }
     }
-    ctx.fillStyle = inferno ? '#1E0806' : '#3F6630';
+    ctx.fillStyle = inferno ? '#1E0806' : divine ? '#F4F1FF' : '#3F6630'; // na Divina, um mar de nuvens
     ctx.fillRect(0, Math.max(0, hy), vw, VH - Math.max(0, hy));
 
     // chão: quadradinhos da horta (mais apagados longe, tipo neblina)
     const T = 150;
-    const fog = inferno ? [40, 10, 8] : [160, 196, 170];
-    const A = inferno ? [74, 22, 16] : [94, 138, 58], B = inferno ? [58, 16, 12] : [87, 127, 54];
+    const fog = inferno ? [40, 10, 8] : divine ? [255, 236, 200] : [160, 196, 170];
+    const A = inferno ? [74, 22, 16] : divine ? [250, 246, 236] : [94, 138, 58], B = inferno ? [58, 16, 12] : divine ? [236, 214, 160] : [87, 127, 54];
     for (let ty = 0; ty < WORLD_H; ty += T) {
       for (let tx = 0; tx < WORLD_W; tx += T) {
         const mx = tx + T / 2 - c.x, my = ty + T / 2 - c.y;
@@ -293,10 +293,10 @@ const R3D = {
       items.push({ z, P, f: () => {
         if (z < meZ) ctx.globalAlpha = 0.4; // cerca entre a câmera e o legume: fica transparente
         if (this.polyPath([[x0, y0, 0], [x1, y1, 0], [x1, y1, FH], [x0, y0, FH]])) {
-          ctx.fillStyle = inferno ? '#2A0D0A' : '#7A5530'; ctx.fill();
-          ctx.strokeStyle = inferno ? 'rgba(255,110,0,0.8)' : '#4E341A'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.fillStyle = inferno ? '#2A0D0A' : divine ? 'rgba(255,214,90,0.55)' : '#7A5530'; ctx.fill();
+          ctx.strokeStyle = inferno ? 'rgba(255,110,0,0.8)' : divine ? '#FFF3C4' : '#4E341A'; ctx.lineWidth = 2; ctx.stroke();
         }
-        ctx.strokeStyle = inferno ? '#FF6D00' : '#A97A44'; ctx.lineWidth = 3;
+        ctx.strokeStyle = inferno ? '#FF6D00' : divine ? '#FFD54F' : '#A97A44'; ctx.lineWidth = 3;
         if (this.line3(x0, y0, FH * 0.7, x1, y1, FH * 0.7)) ctx.stroke();
         ctx.globalAlpha = 1;
       } });
@@ -304,7 +304,7 @@ const R3D = {
     for (let x = 0; x < WORLD_W; x += seg) { fence(x, 0, x + seg, 0); fence(x, WORLD_H, x + seg, WORLD_H); }
     for (let y = 0; y < WORLD_H; y += seg) { fence(0, y, 0, y + seg); fence(WORLD_W, y, WORLD_W, y + seg); }
     // enfeites (plantinhas e pedras)
-    const deco = inferno ? ['🪨', '🔥', '🪨', '💀', '🪨', '🔥', '🪨', '🪨', '🔥', '🪨'] : ['🌱', '🌼', '🌱', '🪨', '🌷', '🍀', '🌱', '🌿', '🌼', '🌱'];
+    const deco = inferno ? ['🪨', '🔥', '🪨', '💀', '🪨', '🔥', '🪨', '🪨', '🔥', '🪨'] : divine ? ['☁️', '✨', '☁️', '🕊️', '☁️', '🌟', '☁️', '✨', '🪽', '☁️'] : ['🌱', '🌼', '🌱', '🪨', '🌷', '🍀', '🌱', '🌿', '🌼', '🌱'];
     for (const d of this.decor3d()) {
       const dx = d.x - c.x, dy = d.y - c.y;
       if (dx * dx + dy * dy > 1300 * 1300) continue;
@@ -345,7 +345,7 @@ const R3D = {
       if (!fp) {
         const P = this.proj(p.x, p.y, 34);
         add(P, () => this.anchored(P, p.x, p.y, () => { this.drawPlayer(p); this.drawAbilityOver(p); this.drawPlayer5(p); }));
-        if (g.coop && p !== me && P) items.push({ z: P[2] - 1, P, f: () => this.text(p.name, P[0], P[1] - 48 * P[3], clamp(18 * P[3], 12, 22), SLOT_COLORS[p.slot % SLOT_COLORS.length], 'center') });
+        if (g.coop && p !== me && P) items.push({ z: P[2] - 1, P, f: () => this.text(this.titled(p.name, p.emp), P[0], P[1] - 48 * P[3], clamp(18 * P[3], 12, 22), SLOT_COLORS[p.slot % SLOT_COLORS.length], 'center') });
         for (const w of p.weapons) {
           if (w.def.laser) continue;
           const Q = this.proj(w.tipX, w.tipY, 30);
@@ -379,9 +379,9 @@ const R3D = {
       add(P, () => {
         const r = b.radius * P[3];
         if (b.web) { this.circle(P[0], P[1], r + 2, 'rgba(255,255,255,0.35)'); this.circle(P[0], P[1], r * 0.7, '#F5F5F5'); return; }
-        this.circle(P[0], P[1], r + 3 * P[3], inferno ? 'rgba(255,80,0,0.35)' : '#3A0A4A');
-        this.circle(P[0], P[1], r, inferno ? '#FF6D00' : '#C24BFF');
-        this.circle(P[0], P[1], r * 0.4, inferno ? '#FFF59D' : '#F5D6FF');
+        this.circle(P[0], P[1], r + 3 * P[3], inferno ? 'rgba(255,80,0,0.35)' : divine ? 'rgba(255,200,40,0.35)' : '#3A0A4A');
+        this.circle(P[0], P[1], r, inferno ? '#FF6D00' : divine ? '#FFB300' : '#C24BFF');
+        this.circle(P[0], P[1], r * 0.4, inferno ? '#FFF59D' : divine ? '#FFFFFF' : '#F5D6FF');
       });
     }
     // partículas
